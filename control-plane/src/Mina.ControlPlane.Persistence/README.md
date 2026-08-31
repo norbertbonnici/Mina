@@ -64,3 +64,20 @@ in-memory store and says so loudly at startup. Production connection strings use
 round-trip, lifecycle persistence, enum storage, the concurrency contract, and `SessionService`
 driven end to end over the real repository. Provider-specific behaviour against Azure SQL is
 verified once the dev environment exists.
+
+## The audit trail
+
+Governance events live in the `audit` schema, separate from both the operational tables and the
+telemetry ones. The application only ever inserts and selects there; production grants it exactly
+that and no more, so rewriting history has to go around the application rather than through it.
+
+Each event carries the hash of the one before it. That does not prevent tampering — a writer with
+enough privilege could rewrite the whole chain — but combined with the periodic export, which
+copies a range and its content hash to write-once storage and records that anchor back into the
+chain, silent alteration becomes detectable: a rewritten chain no longer matches its anchors.
+`GET /api/audit/verify` walks the chain and reports the first event that does not add up.
+
+Events are written **before** the action they describe, and a failure to write throws, so a
+governance action cannot proceed unlogged. The deliberate consequence is that a failure between the
+two can leave an event for an action that did not complete: over-recording is the safe direction for
+an audit trail.

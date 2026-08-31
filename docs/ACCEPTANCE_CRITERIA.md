@@ -13,7 +13,7 @@
 - [ ] AC-010 Sensitive URL suppression cannot activate without manager approval.
 - [ ] AC-011 Sensitive-session approval automatically expires.
 - [ ] AC-012 Sensitive sessions retain mandatory non-URL audit events. *(Suppression is enforced authoritatively at ingest: a suppressed session's destinations are discarded and reduced to counts even if a node sends them, and the discrepancy raises a critical event; tested at service and HTTP level.)*
-- [ ] AC-013 Wazuh receives the documented security/audit event set.
+- [ ] AC-013 Wazuh receives the documented security/audit event set. *(The event set is emitted to a durable, hash-chained audit store and tested; delivery to Wazuh over the ADR-0005 tunnel is M3-5 and needs the network team's rule confirmation.)*
 - [ ] AC-014 SigNoz receives documented operational telemetry without accidental sensitive URL leakage.
 - [ ] AC-015 Break-glass is unavailable to ordinary analysts and use generates a high-severity event.
 - [ ] AC-016 Egress endpoints are not externally usable as unauthenticated/open proxies.

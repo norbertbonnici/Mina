@@ -72,8 +72,10 @@ public sealed class SessionService(
             _options.LeaseTtl,
             certificate.SerialNumber);
 
-        await _repository.AddAsync(session, cancellationToken).ConfigureAwait(false);
+        // Audit first: if the event cannot be recorded, the session is never created, so no
+        // session can exist that the trail does not know about (EVENT_SCHEMAS §6).
         await _audit.SessionStartedAsync(session, cancellationToken).ConfigureAwait(false);
+        await _repository.AddAsync(session, cancellationToken).ConfigureAwait(false);
 
         return ToGrant(session, certificate, egress);
     }
@@ -95,8 +97,8 @@ public sealed class SessionService(
         using var certificate = IssueCertificate(session.Id, csr, now);
         session.Renew(now, _options.LeaseTtl, certificate.SerialNumber);
 
-        await _repository.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
         await _audit.SessionRenewedAsync(session, cancellationToken).ConfigureAwait(false);
+        await _repository.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
 
         return ToGrant(session, certificate, egress);
     }
@@ -109,8 +111,8 @@ public sealed class SessionService(
         var session = await RequireOwnedSessionAsync(principal, sessionId, cancellationToken).ConfigureAwait(false);
         session.End(_timeProvider.GetUtcNow(), reason);
 
-        await _repository.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
         await _audit.SessionEndedAsync(session, cancellationToken).ConfigureAwait(false);
+        await _repository.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AuthoriseAsync(SessionPrincipal principal, string region, CancellationToken cancellationToken)

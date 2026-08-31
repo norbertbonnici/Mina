@@ -11,9 +11,11 @@ using Microsoft.Identity.Web;
 using Mina.ControlPlane.Api.Configuration;
 using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Api.Sessions;
+using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Application.Telemetry;
+using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
@@ -35,10 +37,12 @@ builder.Services
 var analystRole = builder.Configuration["Mina:Session:AnalystRole"] ?? "Mina.Analyst";
 var approverRole = builder.Configuration["Mina:SensitiveSession:ApproverRole"] ?? "Mina.Approver";
 var nodeRole = builder.Configuration["Mina:Node:Role"] ?? "Mina.Node";
+var adminRole = builder.Configuration["Mina:Audit:AdminRole"] ?? "Mina.Admin";
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy(SessionEndpoints.AnalystPolicy, policy => policy.RequireRole(analystRole))
     .AddPolicy(SensitiveSessionEndpoints.ApproverPolicy, policy => policy.RequireRole(approverRole))
-    .AddPolicy(NodeEndpoints.NodePolicy, policy => policy.RequireRole(nodeRole));
+    .AddPolicy(NodeEndpoints.NodePolicy, policy => policy.RequireRole(nodeRole))
+    .AddPolicy(AuditEndpoints.AdminPolicy, policy => policy.RequireRole(adminRole));
 
 // Session store: Azure SQL when configured, otherwise an in-memory store for local development
 // (warned about at startup). Migrations are applied by the deployment pipeline, never on startup —
@@ -52,15 +56,23 @@ if (usingInMemoryStore)
     builder.Services.AddSingleton<ISessionQueries>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISensitiveSessionRepository, InMemorySensitiveSessionRepository>();
     builder.Services.AddSingleton<ITelemetryRepository, InMemoryTelemetryRepository>();
+    builder.Services.AddSingleton<InMemoryAuditEventStore>();
+    builder.Services.AddSingleton<IAuditEventStore>(sp => new LoggingAuditEventStore(
+        sp.GetRequiredService<InMemoryAuditEventStore>(),
+        sp.GetRequiredService<ILogger<LoggingAuditEventStore>>()));
 }
 else
 {
     builder.Services.AddMinaSqlPersistence(sessionConnectionString!);
     builder.Services.AddScoped<ISessionQueries>(sp => (EfSessionRepository)sp.GetRequiredService<ISessionRepository>());
+    builder.Services.AddScoped<EfAuditEventStore>();
+    builder.Services.AddScoped<IAuditEventStore>(sp => new LoggingAuditEventStore(
+        sp.GetRequiredService<EfAuditEventStore>(),
+        sp.GetRequiredService<ILogger<LoggingAuditEventStore>>()));
 }
 
 builder.Services.AddSingleton<IEgressDirectory, ConfiguredEgressDirectory>();
-builder.Services.AddSingleton<ISessionAuditSink, LoggingSessionAuditSink>();
+builder.Services.AddScoped<ISessionAuditSink, PersistentSessionAuditSink>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ICertificateAuthorityProvider, DevelopmentCertificateAuthorityProvider>();
 
@@ -81,14 +93,24 @@ builder.Services.AddScoped<SessionService>();
 
 // Sensitive-session (suppression) workflow — ADR-0003.
 builder.Services.Configure<SensitiveSessionOptions>(builder.Configuration.GetSection("Mina:SensitiveSession"));
-builder.Services.AddSingleton<ISensitiveSessionAuditSink, LoggingSensitiveSessionAuditSink>();
+builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();
 builder.Services.AddHostedService<SensitiveSessionExpiryService>();
 
 // Egress-node interface: session allowlist and hostname telemetry ingest (M3-4).
-builder.Services.AddSingleton<ITelemetryAuditSink, LoggingTelemetryAuditSink>();
+builder.Services.AddScoped<ITelemetryAuditSink, PersistentTelemetryAuditSink>();
 builder.Services.AddScoped<TelemetryIngestService>();
 builder.Services.AddScoped<NodeDirectoryService>();
+
+// Audit chain: durable, append-only, hash-linked, and periodically anchored to write-once storage.
+builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.Section));
+builder.Services.AddScoped<AuditWriter>();
+builder.Services.AddScoped<AuditChainVerifier>();
+builder.Services.AddScoped<AuditExportService>();
+builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSink(
+    builder.Configuration["Mina:Audit:ExportPath"]
+    ?? Path.Combine(AppContext.BaseDirectory, "audit-exports")));
+builder.Services.AddHostedService<AuditExportBackgroundService>();
 
 var app = builder.Build();
 
@@ -107,6 +129,7 @@ app.MapGet("/healthz", () => Results.Ok(new { status = "ok", component = "mina-c
 app.MapMinaSessionEndpoints();
 app.MapMinaSensitiveSessionEndpoints();
 app.MapMinaNodeEndpoints();
+app.MapMinaAuditEndpoints();
 
 app.Run();
 

@@ -31,7 +31,7 @@ subject-inference risk.
 
 | Class | Content | Store | Wazuh? | SigNoz? | Suppressible? |
 |---|---|---|---|---|---|
-| C1 Governance audit | auth results, session lifecycle, approvals, policy/admin, break-glass | SQL audit schema + WORM export | Yes | No | **Never** |
+| C1 Governance audit | auth results, session lifecycle, approvals, policy/admin, break-glass | SQL `audit` schema (append-only, hash-chained) + WORM export | Yes | No | **Never** |
 | C2 Session metadata | user, device, session ID, region, timestamps, aggregate counters | SQL audit schema | In events | Counts only | **Never** |
 | C3 Hostname telemetry | per-connection hostname/port/bytes (mina.hostname.v1) | SQL telemetry schema | **No** | **No** | Yes — sensitive sessions |
 | C4 Full-URL telemetry | paths/queries | **Not collected** (exists only if ADR-0002 Option 2/3 ever approved) | No | No | Yes |

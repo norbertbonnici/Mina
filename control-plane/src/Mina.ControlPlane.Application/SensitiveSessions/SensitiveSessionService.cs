@@ -73,8 +73,9 @@ public sealed class SensitiveSessionService(
             Guid.NewGuid(), sessionId, principal.UserObjectId, principal.UserPrincipalName,
             justificationReference, requestedDuration, Policy, now);
 
-        await _requests.AddAsync(request, cancellationToken).ConfigureAwait(false);
+        // Audit before the record exists, so no approval trail can be missing its own beginning.
         await _audit.RequestedAsync(request, cancellationToken).ConfigureAwait(false);
+        await _requests.AddAsync(request, cancellationToken).ConfigureAwait(false);
         return SensitiveSessionView.From(request);
     }
 
@@ -91,8 +92,8 @@ public sealed class SensitiveSessionService(
         request.Approve(
             principal.UserObjectId, principal.UserPrincipalName, ttl, Policy, _clock.GetUtcNow());
 
-        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         await _audit.ApprovedAsync(request, cancellationToken).ConfigureAwait(false);
+        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         return SensitiveSessionView.From(request);
     }
 
@@ -105,8 +106,8 @@ public sealed class SensitiveSessionService(
         var request = await RequireRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         request.Deny(principal.UserObjectId, principal.UserPrincipalName, _clock.GetUtcNow());
 
-        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         await _audit.DeniedAsync(request, cancellationToken).ConfigureAwait(false);
+        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         return SensitiveSessionView.From(request);
     }
 
@@ -119,8 +120,8 @@ public sealed class SensitiveSessionService(
         var request = await RequireRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         request.Cancel(principal.UserObjectId, _clock.GetUtcNow());
 
-        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         await _audit.CancelledAsync(request, cancellationToken).ConfigureAwait(false);
+        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         return SensitiveSessionView.From(request);
     }
 
@@ -152,9 +153,9 @@ public sealed class SensitiveSessionService(
         request.Activate(now);
         session.MarkSensitive();
 
+        await _audit.ActivatedAsync(request, cancellationToken).ConfigureAwait(false);
         await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
         await _sessions.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
-        await _audit.ActivatedAsync(request, cancellationToken).ConfigureAwait(false);
         return SensitiveSessionView.From(request);
     }
 
@@ -202,20 +203,21 @@ public sealed class SensitiveSessionService(
                 continue;
             }
 
+            // D-06: expiry terminates the session rather than silently resuming URL logging on a
+            // continuation of the same activity. Whether it will be terminated is decided before the
+            // event is written, so the event is accurate and still precedes the change it describes.
+            var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+            var terminating = session is not null && session.State == SessionState.Active;
+
+            await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
             await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
 
-            // D-06: expiry terminates the session rather than silently resuming URL logging on a
-            // continuation of the same activity.
-            var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
-            var terminated = false;
-            if (session is not null && session.State == SessionState.Active)
+            if (terminating)
             {
-                session.Revoke(now, "sensitive-session-expiry");
+                session!.Revoke(now, "sensitive-session-expiry");
                 await _sessions.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
-                terminated = true;
             }
 
-            await _audit.ExpiredAsync(request, terminated, cancellationToken).ConfigureAwait(false);
             expired++;
         }
 

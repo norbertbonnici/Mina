@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Domain.Telemetry;
@@ -24,6 +25,8 @@ public sealed class MinaDbContext(DbContextOptions<MinaDbContext> options) : DbC
     public DbSet<ResearchSession> Sessions => Set<ResearchSession>();
 
     public DbSet<SensitiveSessionRequest> SensitiveSessionRequests => Set<SensitiveSessionRequest>();
+
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     public DbSet<HostnameObservation> Hostnames => Set<HostnameObservation>();
 
