@@ -30,6 +30,10 @@ public sealed class RegionPolicy
     public IReadOnlyCollection<string> SelectableRegions =>
         _approved.Where(_active.Contains).OrderBy(r => r, StringComparer.Ordinal).ToArray();
 
+    /// <summary>Every administrator-approved region, whether or not a stamp is running (D-08).</summary>
+    public IReadOnlyCollection<string> ApprovedRegions =>
+        _approved.OrderBy(r => r, StringComparer.Ordinal).ToArray();
+
     public bool IsApproved(string region) => region is not null && _approved.Contains(region);
 
     public bool IsSelectable(string region) =>

@@ -1,0 +1,79 @@
+@page "/"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.Extensions.Options
+@using Mina.ControlPlane.Application.SensitiveSessions
+@using Mina.ControlPlane.Application.Sessions
+@using Mina.ControlPlane.Domain.Regions
+@using Mina.ControlPlane.Domain.SensitiveSessions
+@using Mina.ControlPlane.Domain.Sessions
+@attribute [Authorize]
+@inject ISessionQueries Sessions
+@inject ISensitiveSessionRepository Requests
+@inject RegionPolicy Regions
+@inject TimeProvider Clock
+
+<h1>Overview</h1>
+<p class="lede">Current state of the research-egress platform.</p>
+
+<div class="cards">
+    <div class="card">
+        <div class="value">@_active</div>
+        <div class="label">Active sessions</div>
+    </div>
+    <div class="card">
+        <div class="value">@_sensitive</div>
+        <div class="label">In sensitive mode</div>
+    </div>
+    <div class="card">
+        <div class="value">@_pending</div>
+        <div class="label">Awaiting approval</div>
+    </div>
+    <div class="card">
+        <div class="value">@Regions.SelectableRegions.Count</div>
+        <div class="label">Selectable regions</div>
+    </div>
+</div>
+
+<h2 style="font-size:1rem">Egress regions</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Region</th>
+            <th>Analyst-selectable</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var region in _approved)
+        {
+            var selectable = Regions.IsSelectable(region);
+            <tr>
+                <td>@region</td>
+                <td>
+                    <span class="pill @(selectable ? "active" : "ended")">
+                        @(selectable ? "yes — stamp active" : "approved, no active stamp")
+                    </span>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    private int _active;
+    private int _sensitive;
+    private int _pending;
+    private IReadOnlyList<string> _approved = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var now = Clock.GetUtcNow();
+        var active = await Sessions.ListActiveAsync(now, CancellationToken.None);
+        _active = active.Count;
+        _sensitive = active.Count(s => s.Mode == SessionMode.Sensitive);
+        _pending = (await Requests.ListPendingAsync(CancellationToken.None)).Count;
+
+        // Approved regions, with the active ones marked — an approved region without a stamp is
+        // deliberately not offered to analysts (AC-008).
+        _approved = [.. Regions.ApprovedRegions];
+    }
+}

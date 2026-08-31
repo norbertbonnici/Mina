@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Mina.ControlPlane.Api.Infrastructure;
+using Mina.ControlPlane.Domain.SensitiveSessions;
+using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Pki;
 
 namespace Mina.TestSupport;
@@ -23,7 +25,9 @@ public sealed class ControlPlaneHost(
     string egressHost,
     int egressPort,
     string egressServerName,
-    TimeSpan leaseTtl) : WebApplicationFactory<Program>
+    TimeSpan leaseTtl,
+    ISessionRepository? sharedSessions = null,
+    ISensitiveSessionRepository? sharedRequests = null) : WebApplicationFactory<Program>
 {
     protected override IHost CreateHost(IHostBuilder builder)
     {
@@ -59,6 +63,20 @@ public sealed class ControlPlaneHost(
 
             services.RemoveAll<ICertificateAuthorityProvider>();
             services.AddSingleton<ICertificateAuthorityProvider>(new FixedCertificateAuthorityProvider(authority));
+
+            // Optional shared stores let another host in the same process — the demo's management
+            // UI — read and write the very same sessions and approvals this API serves.
+            if (sharedSessions is not null)
+            {
+                services.RemoveAll<ISessionRepository>();
+                services.AddSingleton(sharedSessions);
+            }
+
+            if (sharedRequests is not null)
+            {
+                services.RemoveAll<ISensitiveSessionRepository>();
+                services.AddSingleton(sharedRequests);
+            }
         });
     }
 

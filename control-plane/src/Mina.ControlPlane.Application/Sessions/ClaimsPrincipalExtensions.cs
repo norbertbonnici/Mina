@@ -1,7 +1,6 @@
 using System.Security.Claims;
-using Mina.ControlPlane.Application.Sessions;
 
-namespace Mina.ControlPlane.Api.Sessions;
+namespace Mina.ControlPlane.Application.Sessions;
 
 /// <summary>
 /// Projects a validated Entra <see cref="ClaimsPrincipal"/> into a <see cref="SessionPrincipal"/>.
@@ -19,16 +18,16 @@ public static class ClaimsPrincipalExtensions
     {
         ArgumentNullException.ThrowIfNull(user);
 
-        var objectId = user.FindFirstValue(ObjectIdClaim)
-            ?? user.FindFirstValue(ObjectIdClaimUri)
+        var objectId = user.FindFirst(ObjectIdClaim)?.Value
+            ?? user.FindFirst(ObjectIdClaimUri)?.Value
             ?? throw new InvalidOperationException("Token is missing the object identifier (oid) claim.");
 
-        var upn = user.FindFirstValue("preferred_username")
-            ?? user.FindFirstValue(ClaimTypes.Upn)
+        var upn = user.FindFirst("preferred_username")?.Value
+            ?? user.FindFirst(ClaimTypes.Upn)?.Value
             ?? user.Identity?.Name
             ?? objectId;
 
-        var deviceId = user.FindFirstValue(DeviceIdClaim);
+        var deviceId = user.FindFirst(DeviceIdClaim)?.Value;
 
         var roles = user.FindAll(RolesClaim).Select(c => c.Value)
             .Concat(user.FindAll(ClaimTypes.Role).Select(c => c.Value))

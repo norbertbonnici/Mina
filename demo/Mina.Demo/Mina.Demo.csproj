@@ -5,6 +5,10 @@
     <ProjectReference Include="..\..\endpoint-agent\src\Mina.EndpointAgent\Mina.EndpointAgent.csproj" />
     <ProjectReference Include="..\..\control-plane\src\Mina.ControlPlane.Pki\Mina.ControlPlane.Pki.csproj" />
     <ProjectReference Include="..\..\control-plane\src\Mina.ControlPlane.Api\Mina.ControlPlane.Api.csproj" />
+    <ProjectReference Include="..\..\management-ui\src\Mina.ManagementUi\Mina.ManagementUi.csproj" />
+    <ProjectReference Include="..\..\control-plane\src\Mina.ControlPlane.Application\Mina.ControlPlane.Application.csproj" />
+    <ProjectReference Include="..\..\control-plane\src\Mina.ControlPlane.Persistence\Mina.ControlPlane.Persistence.csproj" />
+    <ProjectReference Include="..\..\control-plane\src\Mina.ControlPlane.Domain\Mina.ControlPlane.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>

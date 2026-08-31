@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 
-namespace Mina.ControlPlane.Api.Infrastructure;
+namespace Mina.ControlPlane.Persistence;
 
 /// <summary>
 /// In-memory approval store for local development, paired with

@@ -1,5 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Application\Mina.ControlPlane.Application.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Persistence\Mina.ControlPlane.Persistence.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Domain\Mina.ControlPlane.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Identity.Web.UI" Version="4.14.2" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

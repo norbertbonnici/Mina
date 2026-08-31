@@ -9,7 +9,11 @@
 // no bypass in it, and none of this code is part of any deployed artefact.
 
 using System.Globalization;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
 using Mina.Demo;
 using Mina.EndpointAgent.Configuration;
@@ -24,6 +28,9 @@ const string Region = "westeurope";
 var proxyPort = ArgValue(args, "--proxy-port") is { } p
     ? int.Parse(p, CultureInfo.InvariantCulture)
     : 18080;
+var uiPort = ArgValue(args, "--ui-port") is { } u
+    ? int.Parse(u, CultureInfo.InvariantCulture)
+    : 18081;
 var envoyBinary = ArgValue(args, "--envoy") ?? EnvoyProcess.LocateBinary();
 
 Banner();
@@ -42,12 +49,25 @@ await using (egress)
     Step("Egress", $"{egress.Description} on {egress.Host}:{egress.Port}");
 
     // 2. Control plane ---------------------------------------------------------------------------
+    // Shared stores so the management UI sees exactly the sessions and approvals the API creates.
+    var sessionStore = new InMemorySessionRepository();
+    var requestStore = new InMemorySensitiveSessionRepository();
+
     using var controlPlane = new ControlPlaneHost(
-        authority, egress.Host, egress.Port, ServerName, leaseTtl: TimeSpan.FromMinutes(15));
+        authority, egress.Host, egress.Port, ServerName, leaseTtl: TimeSpan.FromMinutes(15),
+        sharedSessions: sessionStore, sharedRequests: requestStore);
     using var httpClient = controlPlane.CreateClient();
     Step("Control plane", "real ASP.NET Core API in-process (demo sign-in stands in for Entra)");
 
-    // 3. Agent -----------------------------------------------------------------------------------
+    // 3. Management UI ---------------------------------------------------------------------------
+    var managementUi = await ManagementUiHost.StartAsync(
+        uiPort, sessionStore, sessionStore, requestStore,
+        approvedRegions: ["westeurope", "northeurope", "germanywestcentral", "francecentral"],
+        activeRegions: [Region],
+        approverUpn: "manager@fiaumalta.org");
+    Step("Management UI", $"http://127.0.0.1:{uiPort}  (signed in as manager@fiaumalta.org, approver)");
+
+    // 4. Agent -----------------------------------------------------------------------------------
     var token = BearerTestAuthHandler.Token(
         "oid-demo-analyst", "analyst@fiaumalta.org", "device-demo-1", "Mina.Analyst");
 
@@ -65,8 +85,12 @@ await using (egress)
         TimeProvider.System,
         Microsoft.Extensions.Logging.Abstractions.NullLogger<ResearchSessionManager>.Instance);
 
+    // The agent's client attaches this per request; the demo's direct API calls need it as well.
+    httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
     var tunnelFactory = new SessionTunnelConnectionFactory(sessions);
     LoopbackConnectProxy? proxy = null;
+    Guid? pendingRequestId = null;
 
     try
     {
@@ -81,6 +105,9 @@ await using (egress)
         {
             await proxy.DisposeAsync();
         }
+
+        await managementUi.StopAsync();
+        await managementUi.DisposeAsync();
     }
 
     async Task EstablishAsync()
@@ -134,6 +161,56 @@ await using (egress)
         return string.IsNullOrEmpty(line) ? ' ' : line[0];
     }
 
+    // The analyst asks for URL-telemetry suppression on the live session. The approver then decides
+    // in the management UI — nothing here can approve it.
+    async Task RequestSuppressionAsync()
+    {
+        var session = sessions.Current;
+        if (session is null)
+        {
+            Warn("No live session to request suppression for; press r first.");
+            return;
+        }
+
+        using var response = await httpClient.PostAsJsonAsync(
+            $"api/sessions/{session.SessionId}/sensitive",
+            new { justificationReference = "CASE-2026-0042", requestedMinutes = 60 });
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Warn($"The control plane refused the request ({(int)response.StatusCode}).");
+            return;
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        pendingRequestId = document.RootElement.GetProperty("requestId").GetGuid();
+        Step("Suppression", $"requested (ref CASE-2026-0042, 60 min) — request {pendingRequestId}");
+        Info($"Now approve it as the manager at http://127.0.0.1:{uiPort}/approvals, then press v.");
+    }
+
+    // Activates an approval somebody else granted. Without that approval this call is refused.
+    async Task ActivateSuppressionAsync()
+    {
+        if (pendingRequestId is null)
+        {
+            Warn("No request to activate; press a first.");
+            return;
+        }
+
+        using var response = await httpClient.PostAsync(
+            $"api/sensitive-requests/{pendingRequestId}/activate", content: null);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Warn($"Activation refused ({(int)response.StatusCode}). " +
+                 "Suppression needs an approval recorded by someone other than the analyst.");
+            return;
+        }
+
+        Step("Suppression", "ACTIVE — the egress stops recording hostnames for this session.");
+        Info("The session now shows as Sensitive in the management UI's Sessions screen.");
+    }
+
     async Task KeyLoopAsync()
     {
         while (true)
@@ -171,6 +248,14 @@ await using (egress)
                         Warn("Nothing to renew — there is no live session.");
                     }
 
+                    break;
+
+                case 'a':
+                    await RequestSuppressionAsync();
+                    break;
+
+                case 'v':
+                    await ActivateSuppressionAsync();
                     break;
 
                 case 's':
@@ -259,6 +344,8 @@ static void Menu()
 {
     WriteColour(ConsoleColor.Cyan,
         "  [k] kill session (fail closed)   [r] re-establish   [n] renew cert   [s] status   [q] quit");
+    WriteColour(ConsoleColor.Cyan,
+        "  [a] request suppression (analyst)                   [v] activate once approved");
     Console.WriteLine();
 }
 

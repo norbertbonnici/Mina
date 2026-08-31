@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Mina.ControlPlane.Application.SensitiveSessions;
+using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 
 namespace Mina.ControlPlane.Api.Sessions;

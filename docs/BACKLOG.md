@@ -44,7 +44,7 @@ lists the requirement/criterion it serves. Sizes: S ≤ 1 day, M ≤ 3 days, L �
 | ID | Story | Refs | Size |
 |---|---|---|---|
 | M3-1 | Sensitive-session state machine + approvals API (self-approval rejection, TTL, expiry-terminates) — **done & tested 2026-08-31**: request/approve/deny/cancel/activate endpoints behind analyst and approver role policies, EF-persisted approval records with optimistic concurrency, audit events, and a background expiry sweeper that terminates the session per D-06. 45 new tests. **Remaining for AC-012:** the suppression flag reaching the egress node (M3-4) — the control plane holds the authoritative state today | FR-009..012 | L |
-| M3-2 | Management UI: approvals, sessions, health, audit views, region admin | FR-013 | L |
+| M3-2 | Management UI: approvals, sessions, overview — **done & tested 2026-08-31** (Blazor static SSR, Entra OIDC with a Development-only sign-in for review, approve/deny as antiforgery-protected form posts, 10 integration tests). **Remaining:** audit views (need M3-3's store) and region administration (configuration today) | FR-013 | L |
 | M3-3 | Audit pipeline: synchronous writes, WORM export, event catalogue emission | AC-013 | M |
 | M3-4 | Hostname telemetry ingest + suppression enforcement at node + mismatch alerting | AC-009/012, N5 | M |
 | M3-5 | Wazuh delivery over the Check Point S2S per ADR-0005 (precondition: network-team rule confirmation) + rules/severity mapping | AC-013 | M |

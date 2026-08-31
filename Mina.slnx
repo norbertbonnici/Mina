@@ -25,6 +25,7 @@
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/Mina.ControlPlane.Api.Tests/Mina.ControlPlane.Api.Tests.csproj" />
     <Project Path="tests/integration/Mina.ControlPlane.Persistence.Tests/Mina.ControlPlane.Persistence.Tests.csproj" />
+    <Project Path="tests/integration/Mina.ManagementUi.Tests/Mina.ManagementUi.Tests.csproj" />
     <Project Path="tests/integration/Mina.Transport.Tests/Mina.Transport.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/security/" />

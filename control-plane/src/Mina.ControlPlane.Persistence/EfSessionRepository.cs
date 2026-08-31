@@ -8,7 +8,7 @@ namespace Mina.ControlPlane.Persistence;
 /// aggregate's own methods, and saved — the concurrency token configured on the entity makes a
 /// stale write fail loudly rather than overwrite a newer state.
 /// </summary>
-public sealed class EfSessionRepository(MinaDbContext context) : ISessionRepository
+public sealed class EfSessionRepository(MinaDbContext context) : ISessionRepository, ISessionQueries
 {
     private readonly MinaDbContext _context = context ?? throw new ArgumentNullException(nameof(context));
 
@@ -42,4 +42,18 @@ public sealed class EfSessionRepository(MinaDbContext context) : ISessionReposit
 
         await _context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    public async Task<IReadOnlyList<ResearchSession>> ListActiveAsync(
+        DateTimeOffset asOf, CancellationToken cancellationToken) =>
+        await _context.Sessions
+            .Where(s => s.State == SessionState.Active && s.LeaseExpiresAt > asOf)
+            .OrderByDescending(s => s.CreatedAt)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<ResearchSession>> ListRecentAsync(
+        int limit, CancellationToken cancellationToken) =>
+        await _context.Sessions
+            .OrderByDescending(s => s.CreatedAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 }

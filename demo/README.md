@@ -44,11 +44,21 @@ never the URL path, because nothing decrypts TLS anywhere in this design (ADR-00
 | `k` | **Fail closed.** Ends the session and tears down the proxy. The browser immediately has no route out — it does not fall back to ordinary corporate egress (FR-007, AC-004). |
 | `r` | Re-establish. Browsing resumes on the same port. |
 | `n` | Renewal rotates the session certificate — same session id, new credential (the lease model in ARCHITECTURE §4). |
+| `a` | Analyst asks for URL-telemetry suppression on the live session. Approve it in the management UI, then press `v`. |
+| `v` | Activate the approval. Refused unless somebody else approved it (AC-010). |
 | `s` | Current session, region, logging mode and whether the path is open. |
 | `q` | Quit; the session is ended with the control plane. |
 
 The `info:` lines interleaved in the output are the control plane's real audit events
 (`session_started`, `session_ended`, `session_renewed`) as they are written.
+
+## The management UI
+
+The demo also serves the management console at `http://127.0.0.1:18091` (`--ui-port` to change it),
+signed in as an approver, reading the very same sessions and approvals the API is writing. The full
+governance loop is therefore visible end to end: press `a` to raise a suppression request as the
+analyst, approve it in the browser, press `v` to activate, and watch the session turn Sensitive on
+the Sessions screen.
 
 ## What is real here, and what is not
 
@@ -65,6 +75,8 @@ session certificate, the mTLS tunnel, the loopback CONNECT proxy and its fail-cl
   the observed public IP changes (AC-003) needs the Azure PoC stamp.
 - **Storage and CA are in-memory** — sessions and the CA are lost on restart, as the startup
   warnings say.
+- **Sign-in to the UI is substituted too** — every visitor is the approver. The shipping UI refuses
+  its development sign-in outside a Development host.
 - **No Windows enforcement.** WFP rules, browser pinning and the peer check that verifies the
   connecting process is the managed research browser are M2-4 and need the Windows lab. In this
   demo any local process can use the proxy port.
