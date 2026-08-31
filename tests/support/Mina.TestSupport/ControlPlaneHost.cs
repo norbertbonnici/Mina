@@ -5,10 +5,11 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Pki;
 
-namespace Mina.Agent.E2E.Tests;
+namespace Mina.TestSupport;
 
 /// <summary>
 /// Hosts the real control-plane API for the end-to-end tests, with two substitutions: Entra token
@@ -24,6 +25,15 @@ public sealed class ControlPlaneHost(
     string egressServerName,
     TimeSpan leaseTtl) : WebApplicationFactory<Program>
 {
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        // Point the host at the API's own project directory. Without this the factory guesses a
+        // path next to the solution file, which is wrong for this repository layout — and is only
+        // papered over in test projects by a generated manifest that other hosts (the demo) lack.
+        builder.UseContentRoot(RepoRoot.Path("control-plane", "src", "Mina.ControlPlane.Api"));
+        return base.CreateHost(builder);
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>

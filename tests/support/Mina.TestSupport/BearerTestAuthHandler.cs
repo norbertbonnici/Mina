@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace Mina.Agent.E2E.Tests;
+namespace Mina.TestSupport;
 
 /// <summary>
 /// Stands in for Entra token validation while keeping the agent's real code path: the agent sends

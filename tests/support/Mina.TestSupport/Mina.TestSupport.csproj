@@ -2,6 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\endpoint-agent\src\Mina.EndpointAgent\Mina.EndpointAgent.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Api\Mina.ControlPlane.Api.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Pki\Mina.ControlPlane.Pki.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -7,6 +7,9 @@
     <Project Path="control-plane/src/Mina.ControlPlane.Persistence/Mina.ControlPlane.Persistence.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Pki/Mina.ControlPlane.Pki.csproj" />
   </Folder>
+  <Folder Name="/demo/">
+    <Project Path="demo/Mina.Demo/Mina.Demo.csproj" />
+  </Folder>
   <Folder Name="/endpoint-agent/" />
   <Folder Name="/endpoint-agent/src/">
     <Project Path="endpoint-agent/src/Mina.EndpointAgent/Mina.EndpointAgent.csproj" />

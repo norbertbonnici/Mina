@@ -44,6 +44,9 @@ public sealed class TestEgress : IAsyncDisposable
     /// </summary>
     public IReadOnlyCollection<string> ObservedAuthorities => _observedAuthorities.ToArray();
 
+    /// <summary>Invoked as each authority is observed, so a caller can display telemetry live.</summary>
+    public Action<string>? OnAuthorityObserved { get; set; }
+
     private async Task AcceptLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -98,6 +101,7 @@ public sealed class TestEgress : IAsyncDisposable
             }
 
             _observedAuthorities.Enqueue(target.ToString());
+            OnAuthorityObserved?.Invoke(target.ToString());
 
             using var upstream = new Socket(SocketType.Stream, ProtocolType.Tcp);
             try

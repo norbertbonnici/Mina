@@ -16,6 +16,16 @@ decisions (D-01…D-12) are now decided** — see the decision log in `docs/PHAS
 D-09 retention values await DPO ratification before production). Work proceeds per
 `docs/BACKLOG.md`; milestone M0 is complete.
 
+## See it working
+
+```bash
+MINA_ENVOY=/path/to/envoy dotnet run --project demo/Mina.Demo -c Release
+```
+
+Runs the control plane, a real Envoy egress and the agent in one process, and exposes a proxy port
+your browser can use — then press `k` to watch the protected path fail closed. See
+[`demo/README.md`](demo/README.md) for what is real in that demo and what is stubbed.
+
 | Read | For |
 |---|---|
 | `docs/PHASE0_DECISIONS.md` | The decision/assumption list blocking implementation |
