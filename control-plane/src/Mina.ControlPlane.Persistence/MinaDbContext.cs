@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 
 namespace Mina.ControlPlane.Persistence;
@@ -20,11 +22,31 @@ public sealed class MinaDbContext(DbContextOptions<MinaDbContext> options) : DbC
 
     public DbSet<ResearchSession> Sessions => Set<ResearchSession>();
 
+    public DbSet<SensitiveSessionRequest> SensitiveSessionRequests => Set<SensitiveSessionRequest>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(MinaDbContext).Assembly);
     }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(configurationBuilder);
+
+        // Every timestamp in this model is UTC by construction (the control plane reads its clock
+        // via TimeProvider.GetUtcNow), so storing the instant rather than an offset loses nothing.
+        // It also keeps ordering and range predicates translatable on every provider — SQLite,
+        // which the tests run against, cannot compare or ORDER BY datetimeoffset, so without this
+        // the expiry and queue queries could not be exercised before production.
+        configurationBuilder.Properties<DateTimeOffset>().HaveConversion<UtcDateTimeOffsetConverter>();
+    }
+
+    /// <summary>Stores a <see cref="DateTimeOffset"/> as its UTC instant and reads it back as UTC.</summary>
+    internal sealed class UtcDateTimeOffsetConverter()
+        : ValueConverter<DateTimeOffset, DateTime>(
+            offset => offset.UtcDateTime,
+            utc => new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc), TimeSpan.Zero));
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -39,19 +61,23 @@ public sealed class MinaDbContext(DbContextOptions<MinaDbContext> options) : DbC
     }
 
     /// <summary>
-    /// Advances the concurrency token on every modified entity, so a stale writer's UPDATE matches
-    /// no rows and surfaces as a concurrency conflict. This is what stops a lost update from
-    /// silently resurrecting a revoked session (THREAT_MODEL: session revocation must stick).
+    /// Advances the concurrency token on every modified entity that carries one, so a stale
+    /// writer's UPDATE matches no rows and surfaces as a concurrency conflict. This is what stops a
+    /// lost update from silently resurrecting a revoked session, or from overwriting an approval
+    /// decision that was made concurrently.
     /// </summary>
     private void BumpConcurrencyTokens()
     {
-        foreach (var entry in ChangeTracker.Entries<ResearchSession>())
+        foreach (var entry in ChangeTracker.Entries())
         {
-            if (entry.State == EntityState.Modified)
+            if (entry.State != EntityState.Modified || entry.Metadata.FindProperty(VersionProperty) is null)
             {
-                var version = entry.Property<int>(VersionProperty);
-                version.CurrentValue = version.OriginalValue + 1;
+                continue;
             }
+
+            // Non-generic entry: the token comes back boxed.
+            var version = entry.Property(VersionProperty);
+            version.CurrentValue = (int)version.OriginalValue! + 1;
         }
     }
 }

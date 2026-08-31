@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 
 namespace Mina.ControlPlane.Persistence;
@@ -18,6 +19,7 @@ public static class ServiceCollectionExtensions
         services.AddDbContext<MinaDbContext>(options =>
             options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
 
-        return services.AddScoped<ISessionRepository, EfSessionRepository>();
+        services.AddScoped<ISessionRepository, EfSessionRepository>();
+        return services.AddScoped<ISensitiveSessionRepository, EfSensitiveSessionRepository>();
     }
 }

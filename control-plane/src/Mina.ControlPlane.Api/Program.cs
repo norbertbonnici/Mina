@@ -1,7 +1,9 @@
-// Mina control-plane API (M2-2): Entra-authenticated session issuance, renewal and termination,
-// region policy, and CSR-based session-certificate signing. Persistence is in-memory and the CA
-// is an ephemeral development CA — both are labelled placeholders swapped for Azure SQL and a
-// Key Vault-backed CA in later milestones.
+// Mina control-plane API: Entra-authenticated session issuance, renewal and termination, region
+// policy, CSR-based session-certificate signing, and the manager-approved suppression workflow.
+//
+// Sessions and approvals persist to Azure SQL when a connection string is configured, otherwise to
+// an in-memory store for local development (warned about at startup). The issuing CA is still the
+// ephemeral development CA — the Key Vault-backed provider is M2-2c and needs the Azure subscription.
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
@@ -9,8 +11,10 @@ using Microsoft.Identity.Web;
 using Mina.ControlPlane.Api.Configuration;
 using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Api.Sessions;
+using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.Regions;
+using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
@@ -27,8 +31,10 @@ builder.Services
     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
 
 var analystRole = builder.Configuration["Mina:Session:AnalystRole"] ?? "Mina.Analyst";
+var approverRole = builder.Configuration["Mina:SensitiveSession:ApproverRole"] ?? "Mina.Approver";
 builder.Services.AddAuthorizationBuilder()
-    .AddPolicy(SessionEndpoints.AnalystPolicy, policy => policy.RequireRole(analystRole));
+    .AddPolicy(SessionEndpoints.AnalystPolicy, policy => policy.RequireRole(analystRole))
+    .AddPolicy(SensitiveSessionEndpoints.ApproverPolicy, policy => policy.RequireRole(approverRole));
 
 // Session store: Azure SQL when configured, otherwise an in-memory store for local development
 // (warned about at startup). Migrations are applied by the deployment pipeline, never on startup —
@@ -38,6 +44,7 @@ var usingInMemoryStore = string.IsNullOrWhiteSpace(sessionConnectionString);
 if (usingInMemoryStore)
 {
     builder.Services.AddSingleton<ISessionRepository, InMemorySessionRepository>();
+    builder.Services.AddSingleton<ISensitiveSessionRepository, InMemorySensitiveSessionRepository>();
 }
 else
 {
@@ -64,6 +71,12 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddScoped<SessionService>();
 
+// Sensitive-session (suppression) workflow — ADR-0003.
+builder.Services.Configure<SensitiveSessionOptions>(builder.Configuration.GetSection("Mina:SensitiveSession"));
+builder.Services.AddSingleton<ISensitiveSessionAuditSink, LoggingSensitiveSessionAuditSink>();
+builder.Services.AddScoped<SensitiveSessionService>();
+builder.Services.AddHostedService<SensitiveSessionExpiryService>();
+
 var app = builder.Build();
 
 if (usingInMemoryStore)
@@ -79,6 +92,7 @@ app.UseAuthorization();
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", component = "mina-control-plane-api" }))
     .AllowAnonymous();
 app.MapMinaSessionEndpoints();
+app.MapMinaSensitiveSessionEndpoints();
 
 app.Run();
 

@@ -5,6 +5,7 @@ public enum SensitiveSessionRule
 {
     JustificationRequired,
     ActorRequired,
+    SessionRequired,
     DurationOutOfRange,
     TtlOutOfRange,
     InvalidTransition,

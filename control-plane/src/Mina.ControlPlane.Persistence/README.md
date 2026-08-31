@@ -20,6 +20,14 @@ implicitly get browsing destinations.
   identical on every provider (including the SQLite used in tests). A stale write raises
   `DbUpdateConcurrencyException` instead of overwriting — this is what stops a concurrent renewal
   from resurrecting a session an administrator just revoked.
+- **Timestamps are stored as UTC instants** (`datetime2`), not `datetimeoffset`. Every timestamp in
+  this model is UTC by construction — the control plane reads its clock via
+  `TimeProvider.GetUtcNow()` — so the offset carries no information. Storing the instant keeps
+  ordering and range predicates translatable on every provider: SQLite, which the tests run
+  against, cannot compare or `ORDER BY` a `datetimeoffset`, so with the offset type the approver
+  queue and expiry-sweep queries could not have been exercised at all before production. The
+  `AddSensitiveSessionRequests` migration performs that column change and EF flags it as
+  potentially lossy; it is not, for UTC values, and nothing was deployed when it was made.
 - **`UpdateAsync` refuses detached instances.** A detached aggregate has lost the concurrency token
   it was loaded with (the token lives in the change tracker), so saving it would quietly turn a
   conflicting write into a lost update. Load via `FindAsync`, mutate, then update.
