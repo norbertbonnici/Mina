@@ -1,0 +1,29 @@
+<Solution>
+  <Folder Name="/control-plane/" />
+  <Folder Name="/control-plane/src/">
+    <Project Path="control-plane/src/Mina.ControlPlane.Api/Mina.ControlPlane.Api.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Domain/Mina.ControlPlane.Domain.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Pki/Mina.ControlPlane.Pki.csproj" />
+  </Folder>
+  <Folder Name="/endpoint-agent/" />
+  <Folder Name="/endpoint-agent/src/">
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent/Mina.EndpointAgent.csproj" />
+  </Folder>
+  <Folder Name="/management-ui/" />
+  <Folder Name="/management-ui/src/">
+    <Project Path="management-ui/src/Mina.ManagementUi/Mina.ManagementUi.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/integration/">
+    <Project Path="tests/integration/Mina.Transport.Tests/Mina.Transport.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/security/" />
+  <Folder Name="/tests/security/canaries/">
+    <Project Path="tests/security/canaries/Mina.Canary.DnsLog/Mina.Canary.DnsLog.csproj" />
+    <Project Path="tests/security/canaries/Mina.Canary.IpEcho/Mina.Canary.IpEcho.csproj" />
+  </Folder>
+  <Folder Name="/tests/unit/">
+    <Project Path="tests/unit/Mina.ControlPlane.Domain.Tests/Mina.ControlPlane.Domain.Tests.csproj" />
+    <Project Path="tests/unit/Mina.ControlPlane.Pki.Tests/Mina.ControlPlane.Pki.Tests.csproj" />
+  </Folder>
+</Solution>

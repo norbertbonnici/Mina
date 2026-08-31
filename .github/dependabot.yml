@@ -1,0 +1,17 @@
+# Dependency currency per SR-012; pinned versions + review remain the merge gate (threat N7).
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directories:
+      - "/infra/terraform/environments/dev"
+      - "/infra/terraform/modules/*"
+    schedule:
+      interval: weekly

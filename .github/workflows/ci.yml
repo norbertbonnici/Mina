@@ -1,0 +1,96 @@
+# CI skeleton (M0-1): build + unit tests, IaC hygiene, config scanning, SBOM (SR-011/012).
+# Security suites from docs/TEST_STRATEGY.md attach to this pipeline as their milestones land.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore (locked mode — lockfile drift fails the build, threat N7)
+        run: dotnet restore Mina.slnx --locked-mode
+      - run: dotnet build Mina.slnx -c Release --no-restore
+      - run: dotnet test Mina.slnx -c Release --no-build --logger trx --results-directory TestResults
+      - name: Retain test evidence (AC-019)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults
+          retention-days: 30
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+      - run: terraform fmt -check -recursive infra/terraform
+      - name: Validate modules and environments
+        run: |
+          for dir in infra/terraform/modules/* infra/terraform/environments/*; do
+            if ls "$dir"/*.tf >/dev/null 2>&1; then
+              echo "== $dir"
+              terraform -chdir="$dir" init -backend=false -input=false >/dev/null
+              terraform -chdir="$dir" validate -no-color
+            fi
+          done
+
+  iac-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy config scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: infra/terraform
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+  egress-transport:
+    # Validate the Envoy egress config and prove agent↔Envoy interop against a real Envoy.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Install Envoy (func-e, pinned)
+        run: |
+          curl -fsSL https://func-e.io/install.sh | bash -s -- -b "$HOME/.local/bin"
+          "$HOME/.local/bin/func-e" use 1.39.1
+          echo "MINA_ENVOY=$($HOME/.local/bin/func-e which)" >> "$GITHUB_ENV"
+      - name: Validate Envoy egress config
+        run: ENVOY="$MINA_ENVOY" ./scripts/validate-envoy-config.sh
+      - name: Agent↔Envoy interop + hostname telemetry test
+        run: dotnet test tests/integration/Mina.Transport.Tests -c Release
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet tool install --global CycloneDX
+      - run: dotnet restore Mina.slnx --locked-mode
+      - name: Generate CycloneDX SBOM
+        run: dotnet CycloneDX Mina.slnx -o sbom --json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom
+          retention-days: 90

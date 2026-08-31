@@ -1,0 +1,10 @@
+# Copy to dev.auto.tfvars (git-ignored) and fill in. See docs/PHASE0_DECISIONS.md
+# "Inputs needed to run the PoC".
+
+# D-07 interim: who may reach the dev tunnel ingress (admin workstation / corp egress IPs).
+ingress_allowed_cidrs = ["203.0.113.10/32"]
+
+# AC-017: organisation public ranges egress nodes must never reach.
+corp_public_cidrs = []
+
+admin_ssh_public_key = "ssh-ed25519 AAAA... mina-dev-admin"

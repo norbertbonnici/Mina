@@ -1,0 +1,98 @@
+# Mina egress node — Envoy as an authenticated forward CONNECT proxy (ADR-0001 C-tx).
+#
+# Security properties this config enforces:
+#   - Ingress requires a client certificate chaining to Mina's internal CA (mTLS). There is no
+#     unauthenticated listener — an open-proxy scan gets a TLS handshake demand and nothing else
+#     (AC-016, THREAT open-proxy).
+#   - CONNECT is terminated and forwarded via the dynamic forward proxy to the requested
+#     authority. The authority (hostname) is the hostname telemetry of ADR-0002 Option 1 — logged
+#     without any TLS interception, since it is the plaintext CONNECT target.
+#   - DNS resolution happens here (V4_ONLY), never on the endpoint (DNS-leak control).
+#
+# TLS material is provisioned to /etc/mina/tls by the node bootstrap (from Key Vault in
+# production; see cloud-init.yaml). scripts/validate-envoy-config.sh rewrites these paths to a
+# temp dir of throwaway certs so the config can be validated in CI without secrets.
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+  - name: tunnel_ingress
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8443 }
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          require_client_certificate: true
+          common_tls_context:
+            tls_params:
+              tls_minimum_protocol_version: TLSv1_2
+            tls_certificates:
+            - certificate_chain: { filename: /etc/mina/tls/server.crt }
+              private_key: { filename: /etc/mina/tls/server.key }
+            validation_context:
+              trusted_ca: { filename: /etc/mina/tls/ca.crt }
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: mina_tunnel
+          codec_type: AUTO
+          http2_protocol_options:
+            allow_connect: true
+          upgrade_configs:
+          - upgrade_type: CONNECT
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              # Hostname telemetry (mina.hostname.v1). The node sidecar ships these to the
+              # control plane; suppressed sessions are dropped at the sidecar/control plane per
+              # ADR-0003 (a per-session suppression list is applied there, not here).
+              log_format:
+                json_format:
+                  schema: mina.hostname.v1
+                  authority: "%REQ(:AUTHORITY)%"
+                  bytes_up: "%BYTES_RECEIVED%"
+                  bytes_down: "%BYTES_SENT%"
+                  duration_ms: "%DURATION%"
+                  response_code: "%RESPONSE_CODE%"
+                  client_cert_uri: "%DOWNSTREAM_PEER_URI_SAN%"
+          route_config:
+            name: connect_route
+            virtual_hosts:
+            - name: connect
+              domains: ["*"]
+              routes:
+              - match:
+                  connect_matcher: {}
+                route:
+                  cluster: dynamic_forward_proxy
+                  upgrade_configs:
+                  - upgrade_type: CONNECT
+                    connect_config: {}
+          http_filters:
+          - name: envoy.filters.http.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+              dns_cache_config:
+                name: mina_dns_cache
+                dns_lookup_family: V4_ONLY
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: dynamic_forward_proxy
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_forward_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+        dns_cache_config:
+          name: mina_dns_cache
+          dns_lookup_family: V4_ONLY
