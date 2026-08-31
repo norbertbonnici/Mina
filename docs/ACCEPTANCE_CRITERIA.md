@@ -9,10 +9,10 @@
 - [ ] AC-006 IPv4/IPv6 leak/fallback testing passes.
 - [ ] AC-007 WebRTC/common browser leakage testing passes according to the approved design.
 - [ ] AC-008 Analyst can select an approved EU region and cannot select an unapproved region.
-- [ ] AC-009 Default telemetry correlates the approved URL/hostname data with user, device and session.
+- [ ] AC-009 Default telemetry correlates the approved URL/hostname data with user, device and session. *(Ingest attributes every record to a session — and through it to user and device — or discards it; tested. Full evidence needs the live stamp.)*
 - [ ] AC-010 Sensitive URL suppression cannot activate without manager approval.
 - [ ] AC-011 Sensitive-session approval automatically expires.
-- [ ] AC-012 Sensitive sessions retain mandatory non-URL audit events.
+- [ ] AC-012 Sensitive sessions retain mandatory non-URL audit events. *(Suppression is enforced authoritatively at ingest: a suppressed session's destinations are discarded and reduced to counts even if a node sends them, and the discrepancy raises a critical event; tested at service and HTTP level.)*
 - [ ] AC-013 Wazuh receives the documented security/audit event set.
 - [ ] AC-014 SigNoz receives documented operational telemetry without accidental sensitive URL leakage.
 - [ ] AC-015 Break-glass is unavailable to ordinary analysts and use generates a high-severity event.

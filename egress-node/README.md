@@ -44,3 +44,26 @@ Hardened/pinned Envoy image build (M1-2); Key Vault cert fetch via managed ident
 sidecar for session-allowlist sync + suppression + log shipping (M2-3/M3-4); HTTP/2 CONNECT
 multiplexing on the agent↔Envoy leg (ADR-0001 verification register). Envoy additionally
 validating the client cert's session-SAN against the live allowlist is part of M2-3.
+
+## The sidecar
+
+`src/Mina.EgressNode.Sidecar` runs beside Envoy and does two things:
+
+- **Keeps the suppression view current** by polling the control plane's node allowlist, and
+- **ships Envoy's hostname telemetry upstream**, dropping the destination for any session marked
+  suppressed before it is even queued.
+
+This is the *first* line of suppression enforcement, not the guarantee. A node's view can be stale
+and a compromised node could ignore it entirely, so the control plane re-checks every item it
+receives: destinations for a suppressed session are discarded there and reduced to counts, and the
+discrepancy raises a critical `sensitive_suppression_mismatch` event (threat N5). The sidecar fails
+safe in the same direction — a session it has never heard of, or any session before the first
+successful refresh, has its destinations withheld rather than logged.
+
+Telemetry that cannot be shipped is dropped rather than buffered without bound: it is operational
+data, and an egress node accumulating browsing destinations it cannot deliver is its own risk. The
+gap shows up as delivery lag upstream.
+
+Not done yet: the node's **managed-identity** token (a configured token stands in, and the sidecar
+warns about it), and push-based revocation — today the poll interval bounds how long a revoked or
+newly suppressed session can be acted on stale.

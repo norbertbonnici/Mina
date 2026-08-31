@@ -13,9 +13,11 @@ using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Api.Sessions;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
+using Mina.ControlPlane.Application.Telemetry;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Domain.Telemetry;
 using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
 
@@ -32,9 +34,11 @@ builder.Services
 
 var analystRole = builder.Configuration["Mina:Session:AnalystRole"] ?? "Mina.Analyst";
 var approverRole = builder.Configuration["Mina:SensitiveSession:ApproverRole"] ?? "Mina.Approver";
+var nodeRole = builder.Configuration["Mina:Node:Role"] ?? "Mina.Node";
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy(SessionEndpoints.AnalystPolicy, policy => policy.RequireRole(analystRole))
-    .AddPolicy(SensitiveSessionEndpoints.ApproverPolicy, policy => policy.RequireRole(approverRole));
+    .AddPolicy(SensitiveSessionEndpoints.ApproverPolicy, policy => policy.RequireRole(approverRole))
+    .AddPolicy(NodeEndpoints.NodePolicy, policy => policy.RequireRole(nodeRole));
 
 // Session store: Azure SQL when configured, otherwise an in-memory store for local development
 // (warned about at startup). Migrations are applied by the deployment pipeline, never on startup —
@@ -43,12 +47,16 @@ var sessionConnectionString = builder.Configuration.GetConnectionString("MinaDb"
 var usingInMemoryStore = string.IsNullOrWhiteSpace(sessionConnectionString);
 if (usingInMemoryStore)
 {
-    builder.Services.AddSingleton<ISessionRepository, InMemorySessionRepository>();
+    builder.Services.AddSingleton<InMemorySessionRepository>();
+    builder.Services.AddSingleton<ISessionRepository>(sp => sp.GetRequiredService<InMemorySessionRepository>());
+    builder.Services.AddSingleton<ISessionQueries>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISensitiveSessionRepository, InMemorySensitiveSessionRepository>();
+    builder.Services.AddSingleton<ITelemetryRepository, InMemoryTelemetryRepository>();
 }
 else
 {
     builder.Services.AddMinaSqlPersistence(sessionConnectionString!);
+    builder.Services.AddScoped<ISessionQueries>(sp => (EfSessionRepository)sp.GetRequiredService<ISessionRepository>());
 }
 
 builder.Services.AddSingleton<IEgressDirectory, ConfiguredEgressDirectory>();
@@ -77,6 +85,11 @@ builder.Services.AddSingleton<ISensitiveSessionAuditSink, LoggingSensitiveSessio
 builder.Services.AddScoped<SensitiveSessionService>();
 builder.Services.AddHostedService<SensitiveSessionExpiryService>();
 
+// Egress-node interface: session allowlist and hostname telemetry ingest (M3-4).
+builder.Services.AddSingleton<ITelemetryAuditSink, LoggingTelemetryAuditSink>();
+builder.Services.AddScoped<TelemetryIngestService>();
+builder.Services.AddScoped<NodeDirectoryService>();
+
 var app = builder.Build();
 
 if (usingInMemoryStore)
@@ -93,6 +106,7 @@ app.MapGet("/healthz", () => Results.Ok(new { status = "ok", component = "mina-c
     .AllowAnonymous();
 app.MapMinaSessionEndpoints();
 app.MapMinaSensitiveSessionEndpoints();
+app.MapMinaNodeEndpoints();
 
 app.Run();
 

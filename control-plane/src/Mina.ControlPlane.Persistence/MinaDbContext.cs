@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Domain.Telemetry;
 
 namespace Mina.ControlPlane.Persistence;
 
@@ -23,6 +24,10 @@ public sealed class MinaDbContext(DbContextOptions<MinaDbContext> options) : DbC
     public DbSet<ResearchSession> Sessions => Set<ResearchSession>();
 
     public DbSet<SensitiveSessionRequest> SensitiveSessionRequests => Set<SensitiveSessionRequest>();
+
+    public DbSet<HostnameObservation> Hostnames => Set<HostnameObservation>();
+
+    public DbSet<SuppressedTrafficSummary> SuppressedTraffic => Set<SuppressedTrafficSummary>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

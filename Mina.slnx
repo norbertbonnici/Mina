@@ -10,6 +10,10 @@
   <Folder Name="/demo/">
     <Project Path="demo/Mina.Demo/Mina.Demo.csproj" />
   </Folder>
+  <Folder Name="/egress-node/" />
+  <Folder Name="/egress-node/src/">
+    <Project Path="egress-node/src/Mina.EgressNode.Sidecar/Mina.EgressNode.Sidecar.csproj" />
+  </Folder>
   <Folder Name="/endpoint-agent/" />
   <Folder Name="/endpoint-agent/src/">
     <Project Path="endpoint-agent/src/Mina.EndpointAgent/Mina.EndpointAgent.csproj" />
@@ -40,5 +44,6 @@
     <Project Path="tests/unit/Mina.ControlPlane.Application.Tests/Mina.ControlPlane.Application.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Domain.Tests/Mina.ControlPlane.Domain.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Pki.Tests/Mina.ControlPlane.Pki.Tests.csproj" />
+    <Project Path="tests/unit/Mina.EgressNode.Sidecar.Tests/Mina.EgressNode.Sidecar.Tests.csproj" />
   </Folder>
 </Solution>

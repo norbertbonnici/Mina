@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Domain.Telemetry;
 
 namespace Mina.ControlPlane.Persistence;
 
@@ -20,6 +21,7 @@ public static class ServiceCollectionExtensions
             options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
 
         services.AddScoped<ISessionRepository, EfSessionRepository>();
-        return services.AddScoped<ISensitiveSessionRepository, EfSensitiveSessionRepository>();
+        services.AddScoped<ISensitiveSessionRepository, EfSensitiveSessionRepository>();
+        return services.AddScoped<ITelemetryRepository, EfTelemetryRepository>();
     }
 }
