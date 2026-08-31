@@ -12,6 +12,7 @@ using Mina.ControlPlane.Api.Sessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -29,8 +30,20 @@ var analystRole = builder.Configuration["Mina:Session:AnalystRole"] ?? "Mina.Ana
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy(SessionEndpoints.AnalystPolicy, policy => policy.RequireRole(analystRole));
 
-// Domain/application services.
-builder.Services.AddSingleton<ISessionRepository, InMemorySessionRepository>();
+// Session store: Azure SQL when configured, otherwise an in-memory store for local development
+// (warned about at startup). Migrations are applied by the deployment pipeline, never on startup —
+// schema changes stay a deliberate, reviewable step.
+var sessionConnectionString = builder.Configuration.GetConnectionString("MinaDb");
+var usingInMemoryStore = string.IsNullOrWhiteSpace(sessionConnectionString);
+if (usingInMemoryStore)
+{
+    builder.Services.AddSingleton<ISessionRepository, InMemorySessionRepository>();
+}
+else
+{
+    builder.Services.AddMinaSqlPersistence(sessionConnectionString!);
+}
+
 builder.Services.AddSingleton<IEgressDirectory, ConfiguredEgressDirectory>();
 builder.Services.AddSingleton<ISessionAuditSink, LoggingSessionAuditSink>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -52,6 +65,13 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<SessionService>();
 
 var app = builder.Build();
+
+if (usingInMemoryStore)
+{
+    StartupLog.UsingInMemorySessionStore(app.Logger);
+}
+
+StartupLog.UsingDevelopmentCertificateAuthority(app.Logger);
 
 app.UseAuthentication();
 app.UseAuthorization();

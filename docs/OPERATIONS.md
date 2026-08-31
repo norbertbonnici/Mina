@@ -13,6 +13,8 @@
 - Emergency disable of an egress region.
 - Break-glass activation and post-use review.
 - Certificate/key/secret rotation.
+- Database schema migration (apply the idempotent EF script as a deliberate, approved deployment
+  step; the application never migrates on startup — see `control-plane/src/Mina.ControlPlane.Persistence/README.md`).
 - Rollback to previous release.
 
 ## Monitoring

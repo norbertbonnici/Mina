@@ -10,5 +10,10 @@ public interface ISessionRepository
 
     Task<ResearchSession?> FindAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Persists changes to a session. The instance must be one this repository returned from
+    /// <see cref="FindAsync"/> within the same unit of work: implementations may rely on that to
+    /// detect concurrent modification, and may reject an instance obtained elsewhere.
+    /// </summary>
     Task UpdateAsync(ResearchSession session, CancellationToken cancellationToken);
 }
