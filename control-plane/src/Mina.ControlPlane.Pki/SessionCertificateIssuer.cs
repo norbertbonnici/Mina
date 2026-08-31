@@ -27,7 +27,33 @@ public sealed class SessionCertificateIssuer(CertificateAuthority authority, Ses
 
     public static string SessionUri(Guid sessionId) => $"{SessionUriScheme}:session:{sessionId:D}";
 
+    /// <summary>Issues a session certificate, generating the key server-side (tests/tooling).</summary>
     public X509Certificate2 Issue(Guid sessionId, DateTimeOffset now, TimeSpan ttl)
+    {
+        ValidateArguments(sessionId, ttl);
+        return _authority.IssueClientCertificate(
+            commonName: $"mina-session-{sessionId:D}",
+            sessionUri: SessionUri(sessionId),
+            notBefore: now,
+            lifetime: ttl);
+    }
+
+    /// <summary>
+    /// Issues a session certificate by signing an endpoint-generated CSR, so the private key never
+    /// leaves the endpoint. This is the production issuance path used by the control plane.
+    /// </summary>
+    public X509Certificate2 IssueFromCsr(Guid sessionId, byte[] pkcs10Request, DateTimeOffset now, TimeSpan ttl)
+    {
+        ValidateArguments(sessionId, ttl);
+        ArgumentNullException.ThrowIfNull(pkcs10Request);
+        return _authority.SignClientCertificateRequest(
+            pkcs10Request,
+            sessionUri: SessionUri(sessionId),
+            notBefore: now,
+            lifetime: ttl);
+    }
+
+    private void ValidateArguments(Guid sessionId, TimeSpan ttl)
     {
         if (sessionId == Guid.Empty)
         {
@@ -39,11 +65,5 @@ public sealed class SessionCertificateIssuer(CertificateAuthority authority, Ses
             throw new ArgumentOutOfRangeException(
                 nameof(ttl), $"Session certificate TTL must be positive and at most {_policy.MaxTtl}.");
         }
-
-        return _authority.IssueClientCertificate(
-            commonName: $"mina-session-{sessionId:D}",
-            sessionUri: SessionUri(sessionId),
-            notBefore: now,
-            lifetime: ttl);
     }
 }

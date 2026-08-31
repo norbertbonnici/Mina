@@ -2,6 +2,7 @@
   <Folder Name="/control-plane/" />
   <Folder Name="/control-plane/src/">
     <Project Path="control-plane/src/Mina.ControlPlane.Api/Mina.ControlPlane.Api.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Application/Mina.ControlPlane.Application.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Domain/Mina.ControlPlane.Domain.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Pki/Mina.ControlPlane.Pki.csproj" />
   </Folder>
@@ -15,6 +16,7 @@
   </Folder>
   <Folder Name="/tests/" />
   <Folder Name="/tests/integration/">
+    <Project Path="tests/integration/Mina.ControlPlane.Api.Tests/Mina.ControlPlane.Api.Tests.csproj" />
     <Project Path="tests/integration/Mina.Transport.Tests/Mina.Transport.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/security/" />
@@ -23,6 +25,7 @@
     <Project Path="tests/security/canaries/Mina.Canary.IpEcho/Mina.Canary.IpEcho.csproj" />
   </Folder>
   <Folder Name="/tests/unit/">
+    <Project Path="tests/unit/Mina.ControlPlane.Application.Tests/Mina.ControlPlane.Application.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Domain.Tests/Mina.ControlPlane.Domain.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Pki.Tests/Mina.ControlPlane.Pki.Tests.csproj" />
   </Folder>

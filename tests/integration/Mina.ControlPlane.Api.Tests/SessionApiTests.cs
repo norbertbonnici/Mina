@@ -1,0 +1,156 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
+
+namespace Mina.ControlPlane.Api.Tests;
+
+public sealed class SessionApiTests(MinaApiFactory factory) : IClassFixture<MinaApiFactory>
+{
+    private readonly MinaApiFactory _factory = factory;
+
+    private HttpClient AnalystClient(string oid = "oid-1", string device = "device-1", string roles = "Mina.Analyst")
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Test-Oid", oid);
+        client.DefaultRequestHeaders.Add("X-Test-Upn", $"{oid}@fiaumalta.org");
+        if (!string.IsNullOrEmpty(device))
+        {
+            client.DefaultRequestHeaders.Add("X-Test-Device", device);
+        }
+
+        if (!string.IsNullOrEmpty(roles))
+        {
+            client.DefaultRequestHeaders.Add("X-Test-Roles", roles);
+        }
+
+        return client;
+    }
+
+    private static string NewCsrPem()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var der = new CertificateRequest("CN=mina-agent", key, HashAlgorithmName.SHA256).CreateSigningRequest();
+        return PemEncoding.WriteString("CERTIFICATE REQUEST", der);
+    }
+
+    [Fact]
+    public async Task Anonymous_request_is_unauthorized()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/api/regions", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Regions_lists_only_selectable_regions()
+    {
+        var response = await AnalystClient().GetAsync(new Uri("/api/regions", UriKind.Relative));
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var regions = doc.RootElement.GetProperty("regions").EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+        Assert.Equal(["westeurope"], regions); // francecentral approved-but-inactive, northeurope inactive
+    }
+
+    [Fact]
+    public async Task Issue_returns_a_certificate_and_egress_for_an_analyst()
+    {
+        var response = await AnalystClient().PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+
+        Assert.Equal("westeurope", root.GetProperty("region").GetString());
+        Assert.Equal("20.0.0.1", root.GetProperty("egressHost").GetString());
+        var pem = root.GetProperty("certificatePem").GetString()!;
+        Assert.StartsWith("-----BEGIN CERTIFICATE-----", pem, StringComparison.Ordinal);
+
+        // The issued certificate is real and carries the session id in its SAN.
+        using var cert = X509Certificate2.CreateFromPem(pem);
+        var sessionId = root.GetProperty("sessionId").GetGuid();
+        var san = cert.Extensions.OfType<X509SubjectAlternativeNameExtension>().Single().Format(false);
+        Assert.Contains($"mina:session:{sessionId:D}", san, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Issue_for_an_inactive_but_approved_region_is_forbidden()
+    {
+        var response = await AnalystClient().PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "francecentral", csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Issue_without_the_analyst_role_is_forbidden()
+    {
+        var client = AnalystClient(roles: "Mina.Approver");
+
+        var response = await client.PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Issue_from_a_noncompliant_device_is_forbidden()
+    {
+        var client = AnalystClient(device: ""); // no device id ⇒ treated as non-compliant
+
+        var response = await client.PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Issue_with_a_malformed_csr_is_bad_request()
+    {
+        var response = await AnalystClient().PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = "not a pem" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Full_lifecycle_issue_renew_end()
+    {
+        var client = AnalystClient(oid: "oid-lifecycle");
+
+        var issue = await client.PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+        Assert.Equal(HttpStatusCode.Created, issue.StatusCode);
+        var sessionId = JsonDocument.Parse(await issue.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("sessionId").GetGuid();
+
+        var renew = await client.PostAsJsonAsync(
+            new Uri($"/api/sessions/{sessionId}/renew", UriKind.Relative), new { csrPem = NewCsrPem() });
+        Assert.Equal(HttpStatusCode.OK, renew.StatusCode);
+
+        var end = await client.DeleteAsync(new Uri($"/api/sessions/{sessionId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.NoContent, end.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_session_cannot_be_renewed_by_a_different_user()
+    {
+        var owner = AnalystClient(oid: "oid-owner");
+        var issue = await owner.PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+        var sessionId = JsonDocument.Parse(await issue.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("sessionId").GetGuid();
+
+        var attacker = AnalystClient(oid: "oid-attacker");
+        var renew = await attacker.PostAsJsonAsync(
+            new Uri($"/api/sessions/{sessionId}/renew", UriKind.Relative), new { csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.Forbidden, renew.StatusCode);
+    }
+}

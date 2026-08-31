@@ -29,7 +29,7 @@ lists the requirement/criterion it serves. Sizes: S ≤ 1 day, M ≤ 3 days, L �
 | ID | Story | Refs | Size |
 |---|---|---|---|
 | M2-1 | Entra enterprise app, app roles, group assignment; CA policy (compliant device) in test tenant | FR-003, SR-007 | M |
-| M2-2 | Control-plane API core: session issuance/renewal/termination, region policy, KV-backed CA signing | FR-004/005, AC-008 | L |
+| M2-2 | Control-plane API core: session issuance/renewal/termination, region policy, CSR-based session-cert signing — **core done & tested 2026-08-31** (domain session aggregate + RegionPolicy, `SessionService`, Entra-wired ASP.NET Core endpoints; 44 new tests incl. 9 API integration tests via WebApplicationFactory). **Remaining:** EF Core/Azure SQL repository (in-memory now) and **Key-Vault-backed CA** (ephemeral dev CA now) | FR-004/005, AC-008 | L |
 | M2-3 | Node sidecar: allowlist sync (pull + push), suppression flags plumbing | AC-010 prep | M |
 | M2-4 | Production-grade agent: service + tray UI (state, region, FR-006), IPC hardening, tamper telemetry | SR-006 | L |
 | M2-5 | Intune packaging: signed agent Win32 app, research-browser install/config, shortcut | SR (Intune/signing) | M |

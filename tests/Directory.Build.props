@@ -2,7 +2,8 @@
   <!-- Chain up to the repo-root props, then relax rules that don't fit test code. -->
   <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
   <PropertyGroup>
-    <!-- CA1707: snake_case test method names are the xUnit idiom used in this repo. -->
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <!-- CA1707: snake_case test method names are the xUnit idiom used in this repo.
+         CA1822: test fixture/harness helpers need not be static. -->
+    <NoWarn>$(NoWarn);CA1707;CA1822</NoWarn>
   </PropertyGroup>
 </Project>

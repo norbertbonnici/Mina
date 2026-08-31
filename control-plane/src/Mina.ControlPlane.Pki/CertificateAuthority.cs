@@ -86,8 +86,11 @@ public sealed class CertificateAuthority : IDisposable
     }
 
     /// <summary>
-    /// Issues a client certificate. <paramref name="sessionUri"/>, when supplied, is embedded as
-    /// a SAN URI so the egress can attribute the tunnel to a session without a lookup.
+    /// Issues a client certificate, generating the key pair server-side. Prefer
+    /// <see cref="SignClientCertificateRequest"/> for production issuance so the private key never
+    /// leaves the endpoint; this overload is a convenience for tests and local tooling.
+    /// <paramref name="sessionUri"/>, when supplied, is embedded as a SAN URI so the egress can
+    /// attribute the tunnel to a session without a lookup.
     /// </summary>
     public X509Certificate2 IssueClientCertificate(
         string commonName,
@@ -95,20 +98,71 @@ public sealed class CertificateAuthority : IDisposable
         DateTimeOffset notBefore,
         TimeSpan lifetime)
     {
-        SubjectAlternativeNameBuilder? san = null;
-        if (!string.IsNullOrWhiteSpace(sessionUri))
-        {
-            san = new SubjectAlternativeNameBuilder();
-            san.AddUri(new Uri(sessionUri, UriKind.Absolute));
-        }
-
         return IssueLeaf(
             commonName,
             X509KeyUsageFlags.DigitalSignature,
             OidClientOrServer.ClientAuth,
-            san,
+            BuildSessionSan(sessionUri),
             notBefore,
             lifetime);
+    }
+
+    /// <summary>
+    /// Signs a PKCS#10 certificate signing request generated on the endpoint, returning a client
+    /// certificate (public only — the private key stays with the requester). The CSR signature is
+    /// verified, proving the requester holds the corresponding private key; the CSR's own
+    /// requested extensions are ignored and the CA sets clientAuth EKU, key usage and the session
+    /// SAN itself.
+    /// </summary>
+    public X509Certificate2 SignClientCertificateRequest(
+        byte[] pkcs10Request,
+        string? sessionUri,
+        DateTimeOffset notBefore,
+        TimeSpan lifetime)
+    {
+        ArgumentNullException.ThrowIfNull(pkcs10Request);
+        if (lifetime <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lifetime), "Certificate lifetime must be positive.");
+        }
+
+        // Verifies the CSR self-signature; throws if the requester does not hold the private key.
+        var request = CertificateRequest.LoadSigningRequest(
+            pkcs10Request,
+            HashAlgorithmName.SHA256,
+            CertificateRequestLoadOptions.Default);
+
+        request.CertificateExtensions.Clear();
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, critical: true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
+        request.CertificateExtensions.Add(
+            new X509EnhancedKeyUsageExtension([OidClientOrServer.ClientAuth], critical: false));
+        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, critical: false));
+        var san = BuildSessionSan(sessionUri);
+        if (san is not null)
+        {
+            request.CertificateExtensions.Add(san.Build());
+        }
+
+        var effectiveNotBefore = notBefore < _signingCertificate.NotBefore.ToUniversalTime()
+            ? _signingCertificate.NotBefore.ToUniversalTime()
+            : notBefore;
+        var serial = RandomNumberGenerator.GetBytes(16);
+
+        // No CopyWithPrivateKey: the returned certificate carries only the public key.
+        return request.Create(_signingCertificate, effectiveNotBefore, ClampNotAfter(notBefore + lifetime), serial);
+    }
+
+    private static SubjectAlternativeNameBuilder? BuildSessionSan(string? sessionUri)
+    {
+        if (string.IsNullOrWhiteSpace(sessionUri))
+        {
+            return null;
+        }
+
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddUri(new Uri(sessionUri, UriKind.Absolute));
+        return san;
     }
 
     private X509Certificate2 IssueLeaf(
