@@ -13,6 +13,7 @@ using Mina.EndpointAgent;
 using Mina.EndpointAgent.Configuration;
 using Mina.EndpointAgent.Proxy;
 using Mina.EndpointAgent.Session;
+using Mina.Observability;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -21,6 +22,10 @@ builder.Services.Configure<MinaAgentOptions>(builder.Configuration.GetSection(Mi
 
 var agentOptions = builder.Configuration.GetSection(MinaAgentOptions.Section).Get<MinaAgentOptions>()
     ?? new MinaAgentOptions();
+
+// The agent proxies research traffic, so its own logs name destinations. Telemetry leaves here
+// only through the scrubbing pipeline.
+builder.Services.AddMinaObservability(builder.Configuration, aspNetCore: false);
 
 builder.Services.AddSingleton(TimeProvider.System);
 

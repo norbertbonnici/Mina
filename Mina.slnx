@@ -18,6 +18,11 @@
   <Folder Name="/endpoint-agent/src/">
     <Project Path="endpoint-agent/src/Mina.EndpointAgent/Mina.EndpointAgent.csproj" />
   </Folder>
+  <Folder Name="/integrations/" />
+  <Folder Name="/integrations/signoz/" />
+  <Folder Name="/integrations/signoz/src/">
+    <Project Path="integrations/signoz/src/Mina.Observability/Mina.Observability.csproj" />
+  </Folder>
   <Folder Name="/management-ui/" />
   <Folder Name="/management-ui/src/">
     <Project Path="management-ui/src/Mina.ManagementUi/Mina.ManagementUi.csproj" />
@@ -45,5 +50,6 @@
     <Project Path="tests/unit/Mina.ControlPlane.Domain.Tests/Mina.ControlPlane.Domain.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Pki.Tests/Mina.ControlPlane.Pki.Tests.csproj" />
     <Project Path="tests/unit/Mina.EgressNode.Sidecar.Tests/Mina.EgressNode.Sidecar.Tests.csproj" />
+    <Project Path="tests/unit/Mina.Observability.Tests/Mina.Observability.Tests.csproj" />
   </Folder>
 </Solution>

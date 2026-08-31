@@ -5,6 +5,7 @@
     <ProjectReference Include="..\Mina.ControlPlane.Pki\Mina.ControlPlane.Pki.csproj" />
     <ProjectReference Include="..\Mina.ControlPlane.Application\Mina.ControlPlane.Application.csproj" />
     <ProjectReference Include="..\Mina.ControlPlane.Persistence\Mina.ControlPlane.Persistence.csproj" />
+    <ProjectReference Include="..\..\..\integrations\signoz\src\Mina.Observability\Mina.Observability.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,8 +22,12 @@ using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Domain.Telemetry;
 using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
+using Mina.Observability;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Operational telemetry to SigNoz. The scrub processors are part of this wiring, not optional.
+builder.Services.AddMinaObservability(builder.Configuration);
 
 builder.Services.Configure<SessionServiceOptions>(builder.Configuration.GetSection("Mina:Session"));
 builder.Services.Configure<MinaRegionOptions>(builder.Configuration.GetSection(MinaRegionOptions.Section));
@@ -135,3 +139,13 @@ app.Run();
 
 /// <summary>Exposed so the integration test host (WebApplicationFactory) can bootstrap the app.</summary>
 public partial class Program;
+
+namespace Mina.ControlPlane.Api
+{
+    /// <summary>
+    /// Names this assembly for test hosts. Referenced instead of <c>Program</c> because
+    /// Microsoft.AspNetCore.Mvc.Testing makes referenced projects' internals visible to the test
+    /// assembly, so a bare <c>Program</c> can collide with another entry point's.
+    /// </summary>
+    public sealed class ControlPlaneApiEntryPoint;
+}

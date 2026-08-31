@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Mina.ControlPlane.Api;
 using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
@@ -27,7 +28,7 @@ public sealed class ControlPlaneHost(
     string egressServerName,
     TimeSpan leaseTtl,
     ISessionRepository? sharedSessions = null,
-    ISensitiveSessionRepository? sharedRequests = null) : WebApplicationFactory<Program>
+    ISensitiveSessionRepository? sharedRequests = null) : WebApplicationFactory<ControlPlaneApiEntryPoint>
 {
     protected override IHost CreateHost(IHostBuilder builder)
     {

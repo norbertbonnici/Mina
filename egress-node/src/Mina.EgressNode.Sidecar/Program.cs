@@ -9,6 +9,7 @@
 // destinations recorded (threat N5).
 
 using Mina.EgressNode.Sidecar;
+using Mina.Observability;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -19,6 +20,9 @@ if (string.IsNullOrWhiteSpace(options.Region))
 {
     throw new InvalidOperationException($"{SidecarOptions.Section}:Region is required.");
 }
+
+// The sidecar handles hostnames by definition; scrubbing applies to its telemetry too.
+builder.Services.AddMinaObservability(builder.Configuration, aspNetCore: false);
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<SuppressionAllowlist>();

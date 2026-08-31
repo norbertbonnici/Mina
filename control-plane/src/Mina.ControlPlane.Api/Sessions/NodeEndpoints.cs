@@ -1,4 +1,5 @@
 using Mina.ControlPlane.Application.Telemetry;
+using Mina.Observability;
 
 namespace Mina.ControlPlane.Api.Sessions;
 
@@ -39,7 +40,7 @@ public static class NodeEndpoints
         });
 
         group.MapPost("/telemetry", async (
-            TelemetryBatchDto dto, TelemetryIngestService ingest, CancellationToken ct) =>
+            TelemetryBatchDto dto, TelemetryIngestService ingest, MinaMetrics metrics, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(dto.Region))
             {
@@ -50,6 +51,14 @@ public static class NodeEndpoints
                 i.SessionId, i.OccurredAt, i.Hostname, i.Port, i.BytesUp, i.BytesDown, i.DurationMs))]);
 
             var result = await ingest.IngestAsync(batch, ct);
+
+            metrics.TelemetryIngested(dto.Region, "recorded", result.Recorded);
+            metrics.TelemetryIngested(dto.Region, "aggregated", result.Aggregated);
+            metrics.TelemetryIngested(dto.Region, "unattributable", result.Unattributable);
+            if (result.SuppressionMismatches > 0)
+            {
+                metrics.SuppressionMismatch(dto.Region, result.SuppressionMismatches);
+            }
 
             // The node is told what happened, including that it sent destinations it should have
             // withheld — a node with a stale allowlist can then correct itself. The control plane

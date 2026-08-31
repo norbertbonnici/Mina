@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.Observability;
 
 namespace Mina.ControlPlane.Api.Sessions;
 
@@ -50,18 +51,32 @@ public static class SessionEndpoints
     }
 
     private static async Task<IResult> IssueAsync(
-        IssueSessionDto dto, ClaimsPrincipal user, SessionService sessions, CancellationToken ct)
+        IssueSessionDto dto, ClaimsPrincipal user, SessionService sessions, MinaMetrics metrics, CancellationToken ct)
     {
         if (!TryDecodeCsr(dto.CsrPem, out var csr))
         {
+            metrics.SessionEstablishFailed(dto.Region, "malformed_csr");
             return Results.Problem("Body must contain a PEM certificate signing request.", statusCode: 400);
         }
 
-        return await ExecuteAsync(async () =>
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
         {
             var grant = await sessions.IssueAsync(user.ToSessionPrincipal(), new SessionIssueRequest(dto.Region, csr), ct);
+            metrics.SessionEstablished(grant.Region, System.Diagnostics.Stopwatch.GetElapsedTime(started));
             return Results.Created($"/api/sessions/{grant.SessionId}", ToResponse(grant));
-        });
+        }
+        catch (SessionAuthorizationException ex)
+        {
+            // The reason is a platform fact (role, device, region), never anything about the
+            // analyst's research, so it is safe as a metric dimension.
+            metrics.SessionEstablishFailed(dto.Region, ex.Reason.ToString());
+            return Problem(ex);
+        }
+        catch (SessionStateException ex)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status409Conflict);
+        }
     }
 
     private static async Task<IResult> RenewAsync(
@@ -89,6 +104,14 @@ public static class SessionEndpoints
         });
     }
 
+    private static IResult Problem(SessionAuthorizationException ex) => ex.Reason switch
+    {
+        SessionDenialReason.SessionNotFound => Results.NotFound(),
+        SessionDenialReason.InvalidCertificateRequest =>
+            Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest),
+        _ => Results.Problem($"Denied: {ex.Reason}", statusCode: StatusCodes.Status403Forbidden),
+    };
+
     private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)
     {
         try
@@ -97,14 +120,7 @@ public static class SessionEndpoints
         }
         catch (SessionAuthorizationException ex)
         {
-            return ex.Reason switch
-            {
-                SessionDenialReason.SessionNotFound => Results.NotFound(),
-                SessionDenialReason.InvalidCertificateRequest =>
-                    Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest),
-                _ => Results.Problem(
-                    $"Denied: {ex.Reason}", statusCode: StatusCodes.Status403Forbidden),
-            };
+            return Problem(ex);
         }
         catch (SessionStateException ex)
         {

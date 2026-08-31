@@ -13,4 +13,8 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\integrations\signoz\src\Mina.Observability\Mina.Observability.csproj" />
+  </ItemGroup>
+
 </Project>
