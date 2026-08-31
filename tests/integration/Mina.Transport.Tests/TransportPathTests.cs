@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mina.ControlPlane.Pki;
 using Mina.EndpointAgent.Proxy;
+using Mina.TestSupport;
 
 namespace Mina.Transport.Tests;
 

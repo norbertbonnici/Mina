@@ -106,6 +106,13 @@ public static class SessionEndpoints
                     $"Denied: {ex.Reason}", statusCode: StatusCodes.Status403Forbidden),
             };
         }
+        catch (SessionStateException ex)
+        {
+            // The session exists but is no longer in a state that allows this — ended, revoked or
+            // expired. That is the caller's situation, not a server fault: answering 409 keeps it
+            // out of the error budget and tells the agent to establish a new session instead.
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status409Conflict);
+        }
     }
 
     private static SessionResponseDto ToResponse(SessionGrant grant)

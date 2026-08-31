@@ -16,6 +16,9 @@
     <Project Path="management-ui/src/Mina.ManagementUi/Mina.ManagementUi.csproj" />
   </Folder>
   <Folder Name="/tests/" />
+  <Folder Name="/tests/e2e/">
+    <Project Path="tests/e2e/Mina.Agent.E2E.Tests/Mina.Agent.E2E.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/integration/">
     <Project Path="tests/integration/Mina.ControlPlane.Api.Tests/Mina.ControlPlane.Api.Tests.csproj" />
     <Project Path="tests/integration/Mina.ControlPlane.Persistence.Tests/Mina.ControlPlane.Persistence.Tests.csproj" />
@@ -25,6 +28,9 @@
   <Folder Name="/tests/security/canaries/">
     <Project Path="tests/security/canaries/Mina.Canary.DnsLog/Mina.Canary.DnsLog.csproj" />
     <Project Path="tests/security/canaries/Mina.Canary.IpEcho/Mina.Canary.IpEcho.csproj" />
+  </Folder>
+  <Folder Name="/tests/support/">
+    <Project Path="tests/support/Mina.TestSupport/Mina.TestSupport.csproj" />
   </Folder>
   <Folder Name="/tests/unit/">
     <Project Path="tests/unit/Mina.ControlPlane.Application.Tests/Mina.ControlPlane.Application.Tests.csproj" />

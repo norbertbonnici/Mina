@@ -139,6 +139,24 @@ public sealed class SessionApiTests(MinaApiFactory factory) : IClassFixture<Mina
     }
 
     [Fact]
+    public async Task Renewing_an_ended_session_is_a_conflict_not_a_server_error()
+    {
+        var client = AnalystClient(oid: "oid-ended");
+        var issue = await client.PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+        var sessionId = JsonDocument.Parse(await issue.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("sessionId").GetGuid();
+
+        await client.DeleteAsync(new Uri($"/api/sessions/{sessionId}", UriKind.Relative));
+
+        var renew = await client.PostAsJsonAsync(
+            new Uri($"/api/sessions/{sessionId}/renew", UriKind.Relative), new { csrPem = NewCsrPem() });
+
+        // The session exists but is ended: a caller-side condition, so 409 — not an unhandled 500.
+        Assert.Equal(HttpStatusCode.Conflict, renew.StatusCode);
+    }
+
+    [Fact]
     public async Task A_session_cannot_be_renewed_by_a_different_user()
     {
         var owner = AnalystClient(oid: "oid-owner");

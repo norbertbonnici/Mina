@@ -33,7 +33,8 @@ lists the requirement/criterion it serves. Sizes: S ≤ 1 day, M ≤ 3 days, L �
 | M2-2b | EF Core / Azure SQL session store — **done & tested 2026-08-31** (`Mina.ControlPlane.Persistence`: DbContext + mapping that keeps the domain EF-free, optimistic concurrency, InitialCreate migration, DI wiring with an in-memory dev fallback; 14 tests incl. concurrency and service-over-EF). Migrations are applied by the deployment pipeline, not at startup | SR-011 | M |
 | M2-2c | **Key-Vault-backed CA** replacing the ephemeral development CA (`ICertificateAuthorityProvider` is the seam) — **not started; needs the dev Azure subscription** | SR-005 | M |
 | M2-3 | Node sidecar: allowlist sync (pull + push), suppression flags plumbing | AC-010 prep | M |
-| M2-4 | Production-grade agent: service + tray UI (state, region, FR-006), IPC hardening, tamper telemetry | SR-006 | L |
+| M2-3b | Agent host wiring: local key/CSR generation, control-plane client, session manager (establish/renew/end) and proxy lifecycle tied to session liveness — **done & tested 2026-08-31** (10 end-to-end tests driving agent → control plane → mTLS tunnel → egress → target, incl. fail-closed on no session, session ended elsewhere, unapproved region, wrong role, non-compliant device) | FR-004/007 | M |
+| M2-4 | Production-grade agent: WAM-broker sign-in (replacing the configured-token stand-in), WFP enforcement, research-browser launch + peer verification, tray UI (state, region, FR-006), IPC hardening, tamper telemetry — **Windows-only; needs the Windows 11 lab** | SR-006, FR-002/006 | L |
 | M2-5 | Intune packaging: signed agent Win32 app, research-browser install/config, shortcut | SR (Intune/signing) | M |
 | M2-6 | Authorisation matrix + token/cert security tests | B3/B5 | M |
 | **Demo** | AC-001/002/003 pass on a managed test device | | |
