@@ -51,6 +51,13 @@ lists the requirement/criterion it serves. Sizes: S ≤ 1 day, M ≤ 3 days, L �
 | M3-6 | SigNoz OTLP export + scrub processor + dashboards — **export and scrubbing done & tested 2026-08-31** (`integrations/signoz`: OTLP wiring for control plane, agent and sidecar; scrub processors on the trace and log pipelines with no switch to disable them; leak-canary metric; 36 tests incl. pipeline content scans). **Remaining:** dashboards (need a reachable SigNoz to validate against) and the ADR-0005 delivery path | AC-014 | M |
 | M3-7 | Sensitive-session + telemetry-hygiene test suites | AC-010..014 | M |
 
+## Security review remediation (2026-09-01)
+
+See `docs/SECURITY_REVIEW_2026-09-01.md`. Six findings fixed (three critical); the confirmed
+remainder is tracked there and should be scheduled before the production gate — in particular
+binding node identity to a region, connecting Envoy's access log to the sidecar, and the
+suppressed-hostname exposure in the node's own log.
+
 ## M4 — Production hardening (Phase 4)
 
 | ID | Story | Refs | Size |

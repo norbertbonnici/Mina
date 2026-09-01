@@ -103,15 +103,21 @@ public static partial class TelemetryScrubber
         !string.IsNullOrEmpty(value) && DestinationPattern().IsMatch(value);
 
     /// <summary>
-    /// Matches the four shapes a destination takes in text: a URL with a scheme, a dotted name with
-    /// a port, an IPv4 address, and a bare domain name.
+    /// Matches the five shapes a destination takes in text: a URL with a scheme, a dotted name with
+    /// a port, an IPv4 address, an IPv6 address, and a bare domain name.
     /// </summary>
     /// <remarks>
-    /// The bare-domain branch requires the final label to be lower-case, which is what keeps
-    /// ordinary log text intact: <c>example.org</c> is redacted while <c>Mina.ControlPlane.Api</c>
-    /// and <c>System.InvalidOperationException</c> are not, because their last label is
-    /// capitalised. Common file suffixes are excluded for the same reason, so a message about
-    /// <c>appsettings.json</c> still reads. IPv4 addresses are redacted whether or not they are
+    /// The bare-domain branch requires the final label to be uniformly cased — all lower or all
+    /// upper — which is what keeps ordinary log text intact while still catching a hostname written
+    /// in capitals: <c>example.org</c> and <c>EXAMPLE.ORG</c> are redacted, while
+    /// <c>Mina.ControlPlane.Api</c>, <c>System.Net</c> and <c>System.InvalidOperationException</c>
+    /// survive, because a mixed-case final label is a type name rather than a TLD. Common file
+    /// suffixes are excluded for the same reason, so a message about <c>appsettings.json</c> still
+    /// reads. A mixed-case name like <c>Example.Org</c> is a known gap; hostnames arriving from a
+    /// browser or from Envoy's CONNECT authority are lower-cased in practice.
+    ///
+    /// The IPv6 branch requires at least three colon separators, so clock times (<c>21:43:56</c>)
+    /// and ISO timestamps are left alone. IP addresses are redacted whether or not they are
     /// internal: losing <c>127.0.0.1</c> from a log line costs little next to letting a research
     /// target through.
     /// </remarks>
@@ -121,9 +127,10 @@ public static partial class TelemetryScrubber
             [A-Za-z][A-Za-z0-9+.\-]*://\S+
           | (?:[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,24}:\d{1,5}
           | \d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?
+          | \[?[A-Fa-f0-9]{0,4}(?::[A-Fa-f0-9]{0,4}){3,7}\]?(?::\d{1,5})?
           | (?:[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?\.)+
-            (?!(?:json|xml|yaml|yml|cs|csproj|sln|slnx|dll|exe|pdb|log|txt|md|config|html|css|js|razor)\b)
-            [a-z]{2,24}\b
+            (?!(?i:json|xml|yaml|yml|cs|csproj|sln|slnx|dll|exe|pdb|log|txt|md|config|html|css|js|razor)\b)
+            (?:[a-z]{2,24}|[A-Z]{2,24})\b
         )
         """,
         RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace)]

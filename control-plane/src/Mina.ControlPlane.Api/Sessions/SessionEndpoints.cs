@@ -53,6 +53,16 @@ public static class SessionEndpoints
     private static async Task<IResult> IssueAsync(
         IssueSessionDto dto, ClaimsPrincipal user, SessionService sessions, MinaMetrics metrics, CancellationToken ct)
     {
+        // Bound the region before it reaches a metric dimension or an audit field: an unbounded
+        // client value would inflate metric cardinality, could carry a destination into operational
+        // telemetry, and if long enough would fail the audit write — which, because audit precedes
+        // the action, would let a caller stop their own denial being recorded.
+        if (!RegionName.IsWellFormed(dto.Region))
+        {
+            metrics.SessionEstablishFailed(region: null, "malformed_region");
+            return Results.Problem("Region is not a well-formed region name.", statusCode: 400);
+        }
+
         if (!TryDecodeCsr(dto.CsrPem, out var csr))
         {
             metrics.SessionEstablishFailed(dto.Region, "malformed_csr");

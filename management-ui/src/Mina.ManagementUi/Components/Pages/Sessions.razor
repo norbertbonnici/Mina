@@ -1,7 +1,8 @@
 @page "/sessions"
 @using Microsoft.AspNetCore.Authorization
 @using Mina.ControlPlane.Domain.Sessions
-@attribute [Authorize]
+@* Sessions name every analyst, their device and whether they are under an approved suppression, so the screen is for approvers and administrators, not for any signed-in user. *@
+@attribute [Authorize(Policy = UiPolicies.Approver)]
 @inject ISessionQueries SessionQueries
 @inject TimeProvider Clock
 

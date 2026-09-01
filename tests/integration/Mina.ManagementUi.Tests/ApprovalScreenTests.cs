@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 
@@ -193,6 +194,55 @@ public sealed class ApprovalScreenTests(ManagementUiFactory factory) : IClassFix
         Assert.Contains("Active sessions", html, StringComparison.Ordinal);
         // francecentral is approved but has no active stamp, so it must not read as selectable.
         Assert.Contains("approved, no active stamp", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_approval_made_on_the_screen_reaches_the_audit_chain()
+    {
+        var request = await SeedPendingAsync("oid-audited-approval");
+        using var approver = Client("oid-audit-decider", "Mina.Approver");
+
+        var response = await PostDecisionAsync(approver, "/approvals/approve", request.Id, 45);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+
+        // An approval decided here must be as recorded as one decided over the API: the approver,
+        // the request and the window it granted (ADR-0003).
+        var events = await _factory.Audit.ReadRecentAsync(50, default);
+        var approved = Assert.Single(events, e => e.EventType == "sensitive_approved"
+            && e.SessionId == request.SessionId);
+
+        Assert.Contains("oid-audit-decider@fiaumalta.org", approved.Data, StringComparison.Ordinal);
+        Assert.Contains(request.Id.ToString(), approved.Data, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_denial_made_on_the_screen_reaches_the_audit_chain()
+    {
+        var request = await SeedPendingAsync("oid-audited-denial");
+        using var approver = Client("oid-audit-denier", "Mina.Approver");
+
+        await PostDecisionAsync(approver, "/approvals/deny", request.Id, ttlMinutes: null);
+
+        var events = await _factory.Audit.ReadRecentAsync(50, default);
+        Assert.Single(events, e => e.EventType == "sensitive_denied" && e.SessionId == request.SessionId);
+    }
+
+    [Fact]
+    public async Task An_analyst_cannot_read_the_sessions_or_overview_screens()
+    {
+        await SeedPendingAsync("oid-crossuser");
+        using var analyst = Client("oid-curious", "Mina.Analyst");
+
+        // These screens name every analyst, their device, and who is under an approved suppression.
+        foreach (var path in new[] { "/sessions", "/" })
+        {
+            var response = await analyst.GetAsync(new Uri(path, UriKind.Relative));
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.DoesNotContain(
+                "oid-crossuser@fiaumalta.org",
+                await response.Content.ReadAsStringAsync(),
+                StringComparison.Ordinal);
+        }
     }
 
     /// <summary>GETs the queue to obtain an antiforgery token and cookie, then posts the decision.</summary>

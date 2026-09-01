@@ -10,8 +10,10 @@
 // front door a request arrives through.
 
 using Microsoft.Extensions.Options;
+using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Domain.Regions;
+using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Persistence;
@@ -44,6 +46,7 @@ if (usingInMemoryStore)
     builder.Services.AddSingleton<ISessionRepository>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISessionQueries>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISensitiveSessionRepository, InMemorySensitiveSessionRepository>();
+    builder.Services.AddSingleton<IAuditEventStore, InMemoryAuditEventStore>();
 }
 else
 {
@@ -51,7 +54,12 @@ else
     builder.Services.AddScoped<ISessionQueries>(sp => (EfSessionRepository)sp.GetRequiredService<ISessionRepository>());
 }
 
-builder.Services.AddSingleton<ISensitiveSessionAuditSink, NullSensitiveSessionAuditSink>();
+// Decisions taken here are approvals: they must reach the audit chain exactly as they do over the
+// API. Using a null sink meant every approval made in this UI — the way approvals are actually
+// made — went unrecorded, which ADR-0003 does not permit.
+builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.Section));
+builder.Services.AddScoped<AuditWriter>();
+builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();
 
 var app = builder.Build();

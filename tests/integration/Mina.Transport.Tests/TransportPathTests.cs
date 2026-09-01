@@ -99,6 +99,52 @@ public sealed class TransportPathTests
     }
 
     [Fact]
+    public async Task An_impostor_presenting_a_session_client_certificate_is_refused()
+    {
+        // Every endpoint holds one of these, private key included. Chaining to Mina's CA must not
+        // be enough to impersonate the egress, or a redirected connection would expose research
+        // traffic in clear.
+        using var ca = CertificateAuthority.Create("Mina Transport Test CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
+        using var caPublic = ca.PublicCertificate;
+        using var sessionCertificate = ca.IssueClientCertificate(
+            "mina-session-impostor", "mina:session:impostor", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
+
+        await using var egress = new TestEgress(sessionCertificate, caPublic);
+        var factory = MakeFactory(ca, egress.Endpoint);
+
+        await using var proxy = new LoopbackConnectProxy(
+            factory, new LoopbackPeerAuthorizer(), NullLogger<LoopbackConnectProxy>.Instance);
+        proxy.Start();
+
+        var (status, _) = await BrowserConnectAsync(proxy.Endpoint!, new ConnectTarget("example.org", 443));
+
+        Assert.Equal(502, status); // no tunnel, and therefore no browsing — fail closed
+    }
+
+    [Fact]
+    public async Task A_server_certificate_issued_for_a_different_host_is_refused()
+    {
+        using var ca = CertificateAuthority.Create("Mina Transport Test CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
+        using var caPublic = ca.PublicCertificate;
+
+        // Correctly a server certificate, correctly from our CA — but not for the egress we asked
+        // for. Chaining alone would accept it.
+        using var wrongName = ca.IssueServerCertificate(
+            "somewhere.else", ["somewhere.else"], [], Now.AddMinutes(-5), TimeSpan.FromHours(1));
+
+        await using var egress = new TestEgress(wrongName, caPublic);
+        var factory = MakeFactory(ca, egress.Endpoint);
+
+        await using var proxy = new LoopbackConnectProxy(
+            factory, new LoopbackPeerAuthorizer(), NullLogger<LoopbackConnectProxy>.Instance);
+        proxy.Start();
+
+        var (status, _) = await BrowserConnectAsync(proxy.Endpoint!, new ConnectTarget("example.org", 443));
+
+        Assert.Equal(502, status);
+    }
+
+    [Fact]
     public async Task Loopback_peer_authorizer_admits_a_loopback_connection()
     {
         using var listener = new Socket(SocketType.Stream, ProtocolType.Tcp);

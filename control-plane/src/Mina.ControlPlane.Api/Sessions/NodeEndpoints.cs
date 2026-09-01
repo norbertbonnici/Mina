@@ -1,4 +1,5 @@
 using Mina.ControlPlane.Application.Telemetry;
+using Mina.ControlPlane.Domain.Regions;
 using Mina.Observability;
 
 namespace Mina.ControlPlane.Api.Sessions;
@@ -35,6 +36,12 @@ public static class NodeEndpoints
         group.MapGet("/{region}/sessions", async (
             string region, NodeDirectoryService directory, CancellationToken ct) =>
         {
+            if (!RegionName.IsWellFormed(region))
+            {
+                return Results.Problem(
+                    "A well-formed region is required.", statusCode: StatusCodes.Status400BadRequest);
+            }
+
             var entries = await directory.ListAsync(region, ct);
             return Results.Ok(entries.Select(e => new NodeSessionDto(e.SessionId, e.Suppressed, e.LeaseExpiresAt)));
         });
@@ -42,9 +49,12 @@ public static class NodeEndpoints
         group.MapPost("/telemetry", async (
             TelemetryBatchDto dto, TelemetryIngestService ingest, MinaMetrics metrics, CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(dto.Region))
+            // Same reasoning as session issuance: the region becomes a metric dimension and an
+            // audit field, so it is bounded before either sees it.
+            if (!RegionName.IsWellFormed(dto.Region))
             {
-                return Results.Problem("A region is required.", statusCode: StatusCodes.Status400BadRequest);
+                return Results.Problem(
+                    "A well-formed region is required.", statusCode: StatusCodes.Status400BadRequest);
             }
 
             var batch = new TelemetryBatch(dto.Region, [.. dto.Items.Select(i => new TelemetryItem(

@@ -6,7 +6,8 @@
 @using Mina.ControlPlane.Domain.Regions
 @using Mina.ControlPlane.Domain.SensitiveSessions
 @using Mina.ControlPlane.Domain.Sessions
-@attribute [Authorize]
+@* The overview counts sessions in sensitive mode, which is itself disclosive; same audience as the sessions screen. *@
+@attribute [Authorize(Policy = UiPolicies.Approver)]
 @inject ISessionQueries Sessions
 @inject ISensitiveSessionRepository Requests
 @inject RegionPolicy Regions

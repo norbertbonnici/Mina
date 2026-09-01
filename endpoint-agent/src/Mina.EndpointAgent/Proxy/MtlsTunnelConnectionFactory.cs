@@ -1,4 +1,5 @@
 using System.Net.Security;
+using System.Security.Cryptography;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 
@@ -35,6 +36,9 @@ public sealed class MtlsTunnelConnectionFactory(
 
     private readonly X509Certificate2 _trustedCaCertificate =
         trustedCaCertificate ?? throw new ArgumentNullException(nameof(trustedCaCertificate));
+
+    /// <summary>id-kp-serverAuth: what an egress listener's certificate must be issued for.</summary>
+    private static readonly Oid ServerAuthentication = new("1.3.6.1.5.5.7.3.1");
 
     public async Task<Stream> ConnectAsync(ConnectTarget target, CancellationToken cancellationToken)
     {
@@ -83,6 +87,19 @@ public sealed class MtlsTunnelConnectionFactory(
         }
     }
 
+    /// <summary>
+    /// Accepts the egress only if the certificate chains to Mina's CA, is issued *for* the egress
+    /// host, and is intended for server authentication.
+    /// </summary>
+    /// <remarks>
+    /// Chaining to the CA is not on its own sufficient, and treating it as sufficient was a real
+    /// hole: every endpoint holds a session client certificate issued by this same CA, private key
+    /// included. Without the name and purpose checks, anyone able to redirect the agent's
+    /// connection could present one of those and terminate the tunnel, reading research traffic in
+    /// clear. So the name mismatch reported by <see cref="SslStream"/> is fatal, and the chain is
+    /// built with a server-authentication application policy, which a clientAuth-only certificate
+    /// cannot satisfy.
+    /// </remarks>
     private bool ValidateEgressCertificate(
         object sender,
         X509Certificate? certificate,
@@ -94,11 +111,20 @@ public sealed class MtlsTunnelConnectionFactory(
             return false;
         }
 
+        // Chain errors are expected — Mina's CA is deliberately not in the machine trust store, and
+        // the chain is re-verified against it below. Anything else, and in particular a name
+        // mismatch against the expected egress host, is fatal.
+        if ((sslPolicyErrors & ~SslPolicyErrors.RemoteCertificateChainErrors) != SslPolicyErrors.None)
+        {
+            return false;
+        }
+
         using var presented = X509CertificateLoader.LoadCertificate(certificate.GetRawCertData());
         using var verification = new X509Chain();
         verification.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
         verification.ChainPolicy.CustomTrustStore.Add(_trustedCaCertificate);
         verification.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        verification.ChainPolicy.ApplicationPolicy.Add(ServerAuthentication);
         return verification.Build(presented);
     }
 }

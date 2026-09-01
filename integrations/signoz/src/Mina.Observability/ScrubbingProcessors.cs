@@ -34,11 +34,14 @@ public sealed class ScrubbingActivityProcessor : BaseProcessor<Activity>
     {
         ArgumentNullException.ThrowIfNull(data);
 
-        // Materialise first: tags cannot be rewritten while they are being enumerated.
+        // TagObjects, not Tags: a tag whose value is not a string still renders into the export,
+        // so it must be inspected too. Materialise first — tags cannot be rewritten while they are
+        // being enumerated.
         List<KeyValuePair<string, string>>? replacements = null;
-        foreach (var tag in data.Tags)
+        foreach (var tag in data.TagObjects)
         {
-            var (scrubbed, redacted) = TelemetryScrubber.ScrubAttribute(tag.Key, tag.Value);
+            var text = tag.Value as string ?? tag.Value?.ToString();
+            var (scrubbed, redacted) = TelemetryScrubber.ScrubAttribute(tag.Key, text);
             if (redacted)
             {
                 (replacements ??= []).Add(new KeyValuePair<string, string>(tag.Key, scrubbed));
@@ -74,7 +77,12 @@ public sealed class ScrubbingLogProcessor : BaseProcessor<LogRecord>
             for (var i = 0; i < attributes.Count; i++)
             {
                 var attribute = attributes[i];
-                if (attribute.Value is not string text)
+
+                // Not just strings. The agent logs its CONNECT target as a struct, so skipping
+                // non-string values sent research destinations straight to the exporter — the very
+                // leak this processor exists to stop.
+                var text = attribute.Value as string ?? attribute.Value?.ToString();
+                if (string.IsNullOrEmpty(text))
                 {
                     continue;
                 }

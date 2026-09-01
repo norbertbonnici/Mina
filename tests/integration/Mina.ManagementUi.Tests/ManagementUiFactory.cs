@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Persistence;
@@ -26,6 +27,8 @@ public sealed class ManagementUiFactory : WebApplicationFactory<Program>
     public InMemorySessionRepository Sessions { get; } = new();
 
     public InMemorySensitiveSessionRepository Requests { get; } = new();
+
+    public InMemoryAuditEventStore Audit { get; } = new();
 
     protected override IHost CreateHost(IHostBuilder builder)
     {
@@ -59,6 +62,8 @@ public sealed class ManagementUiFactory : WebApplicationFactory<Program>
             services.AddSingleton<ISessionRepository>(Sessions);
             services.AddSingleton<ISessionQueries>(Sessions);
             services.AddSingleton<ISensitiveSessionRepository>(Requests);
+            services.RemoveAll<IAuditEventStore>();
+            services.AddSingleton<IAuditEventStore>(Audit);
         });
     }
 

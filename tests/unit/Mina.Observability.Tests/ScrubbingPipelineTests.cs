@@ -67,6 +67,60 @@ public class ScrubbingPipelineTests
     }
 
     [Fact]
+    public void A_non_string_log_attribute_holding_a_destination_does_not_reach_the_exporter()
+    {
+        var exported = new List<LogRecord>();
+        using var factory = LoggerFactory.Create(builder => builder.AddOpenTelemetry(otel =>
+        {
+            otel.IncludeFormattedMessage = true;
+            otel.AddProcessor(new ScrubbingLogProcessor());
+            otel.AddInMemoryExporter(exported);
+        }));
+
+        // This is the real shape of the leak: the agent logs its CONNECT target as a struct, not a
+        // string, so a scrubber that only inspected strings let the destination straight through.
+        factory.CreateLogger("Mina.EndpointAgent")
+            .LogInformation("Tunnel established to {Target}.", new TunnelTarget(ResearchTarget, 443));
+
+        var record = Assert.Single(exported);
+        var rendered = record.FormattedMessage + " " + string.Join(
+            ' ', (record.Attributes ?? []).Select(a => $"{a.Key}={a.Value}"));
+
+        Assert.DoesNotContain(ResearchTarget, rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_non_string_span_tag_holding_a_destination_does_not_reach_the_exporter()
+    {
+        var exported = new List<Activity>();
+        using var provider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(SourceName)
+            .AddProcessor(new ScrubbingActivityProcessor())
+            .AddInMemoryExporter(exported)
+            .Build();
+
+        using (var source = new ActivitySource(SourceName))
+        using (var activity = source.StartActivity("outbound"))
+        {
+            activity?.SetTag("peer", new TunnelTarget(ResearchTarget, 443));
+        }
+
+        provider.ForceFlush();
+
+        var span = Assert.Single(exported);
+        Assert.DoesNotContain(
+            ResearchTarget,
+            string.Join(' ', span.TagObjects.Select(t => t.Value)),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>Stands in for the agent's ConnectTarget: a struct whose ToString is a destination.</summary>
+    private readonly record struct TunnelTarget(string Host, int Port)
+    {
+        public override string ToString() => $"{Host}:{Port}";
+    }
+
+    [Fact]
     public void An_unanticipated_attribute_is_still_scrubbed()
     {
         var exported = new List<Activity>();

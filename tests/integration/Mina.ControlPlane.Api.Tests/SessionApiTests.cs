@@ -138,6 +138,33 @@ public sealed class SessionApiTests(MinaApiFactory factory) : IClassFixture<Mina
         Assert.Equal(HttpStatusCode.NoContent, end.StatusCode);
     }
 
+    [Theory]
+    [InlineData("westeurope\u0000")]
+    [InlineData("not a region")]
+    [InlineData("evil.example.com")]
+    public async Task A_malformed_region_is_rejected_before_it_reaches_metrics_or_audit(string region)
+    {
+        var response = await AnalystClient().PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region, csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_oversized_region_cannot_stop_the_denial_being_recorded()
+    {
+        // Audit is written before the action, so an audit write that fails suppresses the action's
+        // record. A region long enough to overflow the audit payload must therefore be refused at
+        // the boundary rather than carried into the audit event.
+        var region = new string('a', 5000);
+
+        var response = await AnalystClient().PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region, csrPem = NewCsrPem() });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.InternalServerError, response.StatusCode);
+    }
+
     [Fact]
     public async Task Renewing_an_ended_session_is_a_conflict_not_a_server_error()
     {
