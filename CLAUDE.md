@@ -37,10 +37,7 @@ If code and documentation conflict, stop and surface the conflict. Do not silent
 1. Only the protected research-browser traffic uses research egress. Normal endpoint traffic retains normal corporate routing.
 2. Protected browsing fails closed. Loss of the protected path must not silently expose browsing through normal organisational egress.
 3. No unauthenticated forwarding, open proxy, or general-purpose public VPN service.
-4. No route from research egress nodes into internal corporate networks **except the single scoped
-   exception approved in ADR-0006**: node-initiated TLS to one control-plane address on one port,
-   terminating in a DMZ segment, enforced by Azure NSG/UDR and Check Point policy independently.
-   Every other corporate destination stays denied. Any further route needs another approved ADR.
+4. No route from research egress nodes into internal corporate networks unless a future, separately approved ADR explicitly changes this.
 5. Explicitly address DNS, IPv6, WebRTC, proxy and fallback leakage.
 6. Bind access to Entra identity and appropriate managed/compliant device posture.
 7. Use least privilege, managed identities and Key Vault where appropriate.

@@ -116,17 +116,19 @@ Endpoint enforcement design (variant C2, recommended):
 ### 3.2 Control plane (on premises, FIAU Proxmox cluster — ADR-0006)
 
 Since ADR-0006 the control plane runs on the FIAU's own infrastructure, in a **dedicated DMZ VLAN**
-rather than on the corporate LAN. That placement is a control, not a detail: egress nodes can reach
-one endpoint in this segment, so it is treated as reachable by a compromised node and firewalled
-from the corporate LAN accordingly.
+rather than on the corporate LAN. That placement is a control, not a detail: one of its listeners is
+published to the internet so the Azure egress nodes can reach it, so the segment is treated as
+internet-exposed and is firewalled from the corporate LAN accordingly. Nodes gain no route into
+corporate networks — they call a public endpoint, exactly as they called an Azure one.
 
 - **Control-plane API** (ASP.NET Core on Linux, Kestrel behind the DMZ reverse proxy): session
   issuance/renewal/termination; region policy; sensitive-session state machine; internal-CA
   certificate issuance (signing key in Key Vault, never exported); node config distribution; audit
   event write path. **Two listeners with different exposure** (ADR-0006 constraint 3): the
-  node-facing listener carries only the allowlist and telemetry-ingest endpoints and is the only
-  surface reachable from the egress path; the portal, audit read and administrative endpoints are
-  reachable only from corporate workstations.
+  node-facing listener carries only the allowlist and telemetry-ingest endpoints and is the only one
+  published to the internet; the portal, audit read and administrative endpoints bind a
+  corporate-facing listener, so they are unreachable from outside even if the DMZ proxy is
+  misconfigured. The separation is by binding, not by routing.
 - **Management UI** (Blazor static server rendering, same host family): approvals, session/health/
   audit visibility, region policy administration. Entra sign-in, app-role authorisation,
   Conditional Access (compliant device) enforced at the Entra layer. No longer internet-reachable,
@@ -370,17 +372,20 @@ stamp (2+ instances, zones optional) still applies in production.
 Defined in `docs/EVENT_SCHEMAS.md` (envelope, event catalogue, severities, Wazuh mapping,
 SigNoz metric/trace inventory).
 
-### 10.3 Reaching org-hosted Wazuh/SigNoz (decided — ADR-0005)
+### 10.3 Reaching org-hosted Wazuh/SigNoz (ADR-0006 — the problem dissolved)
 
-Delivery uses the organisation's **existing Check Point site-to-site tunnel** between the
-corporate network and Azure (D-05, 2026-08-31), under ADR-0005's binding constraints: only the
-control-plane **relay subnet** routes toward corp, only to the Wazuh/SigNoz receiver
-addresses/ports, enforced both by Azure NSG/UDR and the Check Point policy; no corp-initiated
-flows into the platform are added. **Egress stamps stay entirely off this path** — their VNets
-are never peered or routed to the corp-connected hub, so the "no route from research egress into
-corporate networks" invariant (SR-001, CLAUDE.md #4) is unchanged. Egress nodes deliver
-telemetry only to the control-plane relay over public TLS. Check Point rule scoping is
-confirmed with the network team before M3-5/6.
+The relay now runs on premises alongside Wazuh and SigNoz, so delivery is a **local hop inside the
+FIAU network**. No tunnel, no cross-boundary routing, and no Check Point rule to scope: ADR-0005
+solved the problem of reaching org-hosted receivers from Azure, and the control plane moving on
+premises removed that problem rather than changing it. D-05's open precondition — network-team
+confirmation of Check Point rule scoping — accordingly leaves the critical path, and Mina no longer
+depends on the tunnel at all.
+
+Egress nodes are unchanged: they deliver telemetry only to the control plane over public TLS, now to
+the endpoint published from the FIAU DMZ rather than an Azure one. Their VNets remain unpeered and
+unrouted toward corporate space, so the "no route from research egress into corporate networks"
+invariant (SR-001, CLAUDE.md #4) holds exactly as before — which is why ADR-0006 chose publishing
+over the tunnel.
 
 ## 11. Network invariants → enforcement mapping
 
@@ -388,8 +393,8 @@ confirmed with the network team before M3-5/6.
 |---|---|
 | Ordinary apps never use research egress | Proxy config + WFP rules exist only for the research browser image/instance |
 | Protected traffic never falls back to ordinary egress | Fixed proxy no-DIRECT; loopback gated on live session; C2 WFP default-block |
-| Research egress reaches exactly one corporate address | Scoped exception (ADR-0006): NSG + UDR permit one control-plane host and port, everything else in corporate space denied; Check Point policy enforces the same set independently; automated probes assert both the permitted flow and the denials (AC-017) |
-| Management endpoints authenticated, and unreachable from the egress path | Entra + Conditional Access on UI/API; the portal and audit read are not served on the node-facing listener at all (ADR-0006 constraint 3); nodes authenticate with a per-region app role |
+| Research egress cannot reach corp/RFC1918 | Egress NSG + route deny; no peering; automated probes (AC-017). ADR-0006 kept this intact by publishing the control plane's node-facing endpoint from the FIAU DMZ rather than routing nodes over the tunnel |
+| Management endpoints authenticated, and never served on the published listener | Entra + Conditional Access on UI/API; the portal, audit read and administrative endpoints bind a corporate-facing listener only, so they are unreachable from the internet even if the DMZ proxy is misconfigured (ADR-0006 constraint 1); nodes authenticate with a per-region app role |
 | No public unauthenticated proxy/forwarder | mTLS-only Envoy listener; 443-only LB; optional source-CIDR allowlist; external scans (AC-016) |
 
 ## 12. Break glass (management-only)

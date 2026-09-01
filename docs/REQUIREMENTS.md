@@ -49,7 +49,7 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 ## 4. Security requirements
 | ID | Requirement |
 |---|---|
-| SR-001 | Research egress nodes must not provide a route into internal corporate networks, **except the one scoped exception approved in ADR-0006**: node-initiated TLS to a single control-plane address and port in a DMZ segment. The exception is enforced twice (Azure NSG/UDR and Check Point policy) and every other corporate destination remains denied. |
+| SR-001 | Research egress nodes must not provide a route into internal corporate networks. Unchanged by ADR-0006: the on-premises control plane is reached at a published DMZ endpoint over the public internet, exactly as the Azure endpoint was, so nodes gain no corporate route. |
 | SR-002 | No unauthenticated forwarding or open-proxy behaviour. |
 | SR-003 | Explicitly mitigate/test DNS, IPv6, WebRTC and fallback leaks. |
 | SR-004 | Use least privilege for Azure RBAC, applications, managed identities and administrators — **and, since ADR-0006, for the on-premises plane: Proxmox administrative access, the SQL Server host and its sysadmin roles, and local OS accounts on the control-plane VMs.** |

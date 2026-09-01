@@ -65,7 +65,7 @@ ARCHITECTURE §5.
 
 | ID | Question | Decision | Provenance |
 |---|---|---|---|
-| D-16 | Where the control plane runs | **On premises in the FIAU Proxmox cluster** — portal, web server, service logs and SQL Server. Egress stamps stay in Azure. Egress nodes reach the control plane directly over the Check Point tunnel, which **reaches the CLAUDE.md stop-condition on routes into corporate networks**; approved by the owner and recorded in ADR-0006 with binding constraints | 2026-09-01, project owner |
+| D-16 | Where the control plane runs, and how egress nodes reach it | **On premises in the FIAU Proxmox cluster** — portal, web server, service logs and SQL Server; egress stamps stay in Azure. Nodes reach it at an **internet-facing endpoint published from the FIAU DMZ**, so they gain no corporate route and CLAUDE.md non-negotiable 4 stands unamended. The owner first directed the Check Point tunnel route and reversed it the same day once the trade was set out; ADR-0006 records both | 2026-09-01, project owner |
 | D-17 | How the control plane authenticates to SQL | **Azure Arc-enable SQL Server** so Entra authentication works with no stored credential, preserving the "no client secrets anywhere in the product" property | 2026-09-01, project owner |
 | D-18 | Where the CA signing key and audit anchors live | **Both stay in Azure** — Key Vault for the signing key, immutable blob storage for export anchors. Proxmox offers no HSM and no write-once store, and both guarantees depend on hardware or platform enforcement. Reached outbound from the Arc-enabled control-plane hosts using their Arc managed identity | 2026-09-01, project owner |
 
@@ -75,7 +75,8 @@ Production deployment approval; any TLS interception; any route from **research 
 into corporate networks (ADR-0005 touches only the control-plane relay path); permanent logging
 exemptions; weakening Conditional Access/device compliance; new third-party SaaS dependencies.
 
-**One of these was reached and approved.** "Any route from research egress nodes into corporate
-networks" was exercised on 2026-09-01 by D-16 and is governed by ADR-0006's constraints. It is
-recorded here rather than removed from the list: the condition still applies to any *further*
-route, and a reviewer should be able to see that it was reached deliberately rather than eroded.
+**One of these was approached and not taken.** On 2026-09-01 the on-premises move (D-16) was first
+directed in a shape that would have routed research egress nodes into corporate networks. The owner
+reversed it the same day in favour of publishing the control plane's node-facing endpoint from the
+DMZ, so the stop-condition was not exercised and property 4 stands unamended. Recorded because a
+reviewer should be able to see that the condition did its job.
