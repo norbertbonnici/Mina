@@ -16,6 +16,7 @@ REQUIREMENTS §5.
 | D-04 | Phase 1 PoC build | **Approved** — one test region + lab within the dev cost envelope (≤ €150/mo) | 2026-08-31, project owner |
 | D-05 | Wazuh/SigNoz delivery path (ADR-0005) | **Over the existing Check Point site-to-site tunnel**, relay-subnet-scoped; egress stamps stay entirely off that path. *Precondition:* network team confirms Check Point rule scoping before M3-5/6 | 2026-08-31, project owner |
 | D-06 | Sensitive-session expiry behaviour (ADR-0003) | **Expiry terminates the session**; analyst may start a fresh normal session immediately | 2026-08-31, project owner |
+| D-06a | Scope of D-06 termination | **Amended: expiry terminates the session only when suppression was activated.** An approval that lapsed without being used suppressed nothing, so there is no suppressed activity to stop; the analyst's normally logged session is left alone. Approval, denial, expiry and the unused-approval case are all still audited | 2026-09-01, project owner |
 | D-07 | Egress-stamp ingress restriction | **Corporate egress CIDRs + a short named extra-IP allowlist** (e.g. admin/test connections). No general roaming at MVP (A3 refined accordingly). Maintained as reviewed tfvars | 2026-08-31, project owner |
 | D-08 | Approved region list | **westeurope, northeurope, germanywestcentral, francecentral.** Analysts can select only regions with an active stamp; dev/MVP: westeurope; further stamps activate on demand | 2026-08-31, project owner |
 | D-09 | Retention periods | **Hostname telemetry 180 days · governance audit 5 years · operational telemetry 90 days** — set by owner as operating values and the formal proposal; DPO/legal ratification required before production (REQUIREMENTS §5) | 2026-08-31, project owner |
@@ -51,6 +52,14 @@ design rather than challenged: (1) "Microsoft Edge is the protected research bro
 treated as firm, which is why C3 is only listed conditionally; (2) "fail closed" is interpreted
 as *no traffic rather than wrong-path traffic, including during agent failure* — reflected in
 ARCHITECTURE §5.
+
+## Decisions taken 2026-09-01
+
+| ID | Question | Decision | Provenance |
+|---|---|---|---|
+| D-13 | How the control plane evidences device compliance | **Add the Conditional Access authentication-context (`acrs`) check.** The `deviceid` claim proves registration only; requiring an auth context is the one mechanism by which the API can demand that a compliant-device policy was satisfied for the presenting token. Opt-in via `Mina:Session:RequiredAuthContextId`, with a claims challenge so compliant devices step up silently. Tenant prerequisite tracked in M2-1, agent side in M2-4 | 2026-09-01, project owner |
+| D-14 | Node-side session allowlist versus documentation | **Correct the documentation.** Envoy admits any unexpired certificate chaining to the internal CA; the allowlist governs suppression, not admission, so revocation is bounded by the certificate TTL (≈60 min). ARCHITECTURE and THREAT_MODEL now say so. Node-side enforcement remains available as backlog M4-11 | 2026-09-01, project owner |
+| D-15 | Auditing session-id lookup misses | **Leave as is.** Only a non-owner attempt on an existing session is audited. Recording misses would give an authenticated user a lever on an append-only store whose rows cannot be deleted under current policy (M4-9) | 2026-09-01, project owner |
 
 ## Standing stop-conditions (unchanged by any decision above)
 

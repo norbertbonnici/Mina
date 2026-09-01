@@ -261,8 +261,14 @@ public sealed class SensitiveSessionService(
 
         // D-06: expiry terminates the session rather than silently resuming URL logging on a
         // continuation of the same activity.
+        // D-06, as amended 2026-09-01: expiry terminates the session only when suppression was
+        // actually activated. An approval that was granted and never used suppressed nothing, so
+        // there is no continuation of suppressed activity to protect — and taking a live, normally
+        // logged session away because an unused approval lapsed taught analysts to avoid the
+        // approved workflow, which is the opposite of what the workflow is for.
         var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
-        var terminating = session is not null && session.State == SessionState.Active;
+        var terminating = request.ActivatedAt is not null
+            && session is not null && session.State == SessionState.Active;
 
         // Revoke BEFORE the audit write, not after. Both mutations are already tracked by the time
         // the audit event is appended, and appending flushes the whole unit of work — so writing the

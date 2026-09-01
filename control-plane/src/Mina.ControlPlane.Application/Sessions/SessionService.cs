@@ -16,11 +16,30 @@ public sealed class SessionServiceOptions
 
     /// <summary>Lease/certificate TTL for a session (ARCHITECTURE §4: ≈ 60 minutes).</summary>
     public TimeSpan LeaseTtl { get; set; } = TimeSpan.FromMinutes(60);
+
+    /// <summary>
+    /// Conditional Access authentication-context id (for example <c>c1</c>) that a token must carry
+    /// in its <c>acrs</c> claim before a session is issued. Empty disables the check.
+    /// </summary>
+    /// <remarks>
+    /// This is the only way a resource API can require that a CA policy granting on "device marked
+    /// as compliant" was actually satisfied for the presenting token — an Entra access token has no
+    /// compliance claim, and a <c>deviceid</c> proves registration only. It is opt-in because it has
+    /// a tenant-side prerequisite: an authentication context must exist and a CA policy must be
+    /// bound to it. Turning it on without that configuration refuses every session, which is the
+    /// safe direction but is a deployment step, not a default.
+    ///
+    /// The value is fail-closed and self-verifying in a way the <c>deviceid</c> check is not: if the
+    /// policy is deleted, mis-scoped, or excludes a group, the claim stops arriving and sessions
+    /// stop being issued. Without it, a missing policy is invisible to the platform.
+    /// </remarks>
+    public string RequiredAuthContextId { get; set; } = string.Empty;
 }
 
 /// <summary>
 /// The control-plane use case that turns an authenticated, authorised request into a research
-/// session: it checks role, device compliance and region selectability (AC-008), signs the
+/// session: it checks role, that the token is device-bound, the Conditional Access authentication
+/// context when one is required, and region selectability, signs the
 /// endpoint's CSR into a short-lived session certificate, records the session, and audits the
 /// outcome. Renewal and termination re-run the same authorisation. All decisions are made here,
 /// server-side; nothing trusts the request body beyond the CSR (whose signature is verified).
@@ -125,9 +144,18 @@ public sealed class SessionService(
                 .ConfigureAwait(false);
         }
 
-        if (!principal.DeviceCompliant)
+        if (!principal.DeviceBound)
         {
-            await DenyAsync(principal, SessionDenialReason.DeviceNotCompliant, region, cancellationToken)
+            await DenyAsync(principal, SessionDenialReason.DeviceNotBound, region, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        // When configured, the token must also prove that a Conditional Access policy bound to this
+        // authentication context was satisfied — which is what actually evidences Intune compliance.
+        if (!string.IsNullOrWhiteSpace(_options.RequiredAuthContextId)
+            && principal.AuthenticationContexts?.Contains(_options.RequiredAuthContextId) != true)
+        {
+            await DenyAsync(principal, SessionDenialReason.AuthenticationContextRequired, region, cancellationToken)
                 .ConfigureAwait(false);
         }
 

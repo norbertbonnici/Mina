@@ -4,6 +4,12 @@ namespace Mina.EndpointAgent.Session;
 /// Supplies an Entra access token for the control-plane API. Every session issuance *and every
 /// renewal* asks for a fresh token, so revocation and Conditional Access re-evaluation (device
 /// compliance, risk) propagate within a lease period instead of being pinned at first sign-in.
+///
+/// The production provider must also answer a claims challenge: when the control plane requires a
+/// Conditional Access authentication context it replies 401 with
+/// <c>WWW-Authenticate: Bearer error="insufficient_claims", claims=…</c>, and the token has to be
+/// re-acquired passing those claims (MSAL <c>.WithClaims(...)</c>). The configured-token stand-in
+/// below cannot do that, so the auth-context requirement is not usable end to end until M2-4.
 /// </summary>
 public interface IAccessTokenProvider
 {

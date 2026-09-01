@@ -14,6 +14,9 @@ public static class ClaimsPrincipalExtensions
     private const string DeviceIdClaim = "deviceid";
     private const string RolesClaim = "roles";
 
+    /// <summary>Conditional Access authentication contexts satisfied for this token.</summary>
+    private const string AuthContextClaim = "acrs";
+
     public static SessionPrincipal ToSessionPrincipal(this ClaimsPrincipal user)
     {
         ArgumentNullException.ThrowIfNull(user);
@@ -33,12 +36,17 @@ public static class ClaimsPrincipalExtensions
             .Concat(user.FindAll(ClaimTypes.Role).Select(c => c.Value))
             .ToHashSet(StringComparer.Ordinal);
 
-        // Conditional Access is the authoritative device-compliance gate at token issuance
-        // (SR-007). Absent a dedicated compliance claim, the control plane treats the presence of
-        // a device id as the managed-device signal and refuses otherwise. A first-class compliance
-        // signal can be wired here without touching the domain.
-        var deviceCompliant = !string.IsNullOrEmpty(deviceId);
+        // A deviceid claim means the token came from a device-bound (WAM/PRT) flow on an
+        // Entra-registered device. It is deliberately NOT called compliance: an Entra token carries
+        // no Intune compliance claim, and a registered device that is failing its compliance policy
+        // emits the same deviceid. Compliance is proved by acrs, below, when the deployment
+        // configures an authentication context for it.
+        var deviceBound = !string.IsNullOrEmpty(deviceId);
 
-        return new SessionPrincipal(objectId, upn, deviceId, roles, deviceCompliant);
+        var authContexts = user.FindAll(AuthContextClaim)
+            .Select(c => c.Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        return new SessionPrincipal(objectId, upn, deviceId, roles, deviceBound, authContexts);
     }
 }

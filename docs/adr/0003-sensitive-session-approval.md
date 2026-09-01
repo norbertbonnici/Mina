@@ -58,6 +58,11 @@ and break-glass events; aggregate traffic counters. Permanent exemptions are pro
 
 ## Approval
 
+**Amended by the project owner 2026-09-01 (D-06a): termination applies only to an approval that was
+actually activated.** A request that was approved and never activated lapses on its own; the
+analyst's session, which was never suppressed, continues under normal logging. The expiry event is
+written either way and records whether a session was terminated.
+
 **Confirmed by the project owner 2026-08-31 (D-06): expiry terminates the session.** The
 revert-with-warning alternative was considered and rejected in that decision round. Recorded in
 `docs/PHASE0_DECISIONS.md`.

@@ -62,7 +62,7 @@ the Sessions screen.
 
 ## What is real here, and what is not
 
-**Real:** the control-plane API and its authorisation (analyst role, device compliance, region
+**Real:** the control-plane API and its authorisation (analyst role, device-bound token, region
 selectability), CSR-based issuance with the private key never leaving the agent, the short-lived
 session certificate, the mTLS tunnel, the loopback CONNECT proxy and its fail-closed behaviour, and
 — with `MINA_ENVOY` set — the egress running the committed production config.

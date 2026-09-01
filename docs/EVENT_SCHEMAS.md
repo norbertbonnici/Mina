@@ -38,7 +38,7 @@ record; at-least-once with `event_id` de-duplication.
 | event_type | Severity | Emitted by | data payload (key fields) |
 |---|---|---|---|
 | auth_success | info | control-plane | roles, token device claims present |
-| auth_failure | warning | control-plane | reason (invalid_token, no_role, device_noncompliant), source IP |
+| auth_failure | warning | control-plane | reason (`invalid_token`, `NotAuthorisedRole`, `DeviceNotBound`, `AuthenticationContextRequired`, `RegionNotSelectable`), source IP |
 | authz_denied | warning | control-plane | attempted action, required role |
 | session_started | info | control-plane | region, egress_ip_prefix, client_cert_serial |
 | session_renewed | info | control-plane | cert_serial_old/new |

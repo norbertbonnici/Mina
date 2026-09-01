@@ -48,15 +48,67 @@ public class SessionServiceTests
     }
 
     [Fact]
-    public async Task Issue_denies_a_noncompliant_device()
+    public async Task Issue_denies_a_token_that_is_not_device_bound()
     {
         var h = new Harness();
-        var principal = h.Analyst() with { DeviceCompliant = false };
+        var principal = h.Analyst() with { DeviceBound = false };
 
         var ex = await Assert.ThrowsAsync<SessionAuthorizationException>(
             () => h.Service.IssueAsync(principal, h.Request("westeurope"), default));
 
-        Assert.Equal(SessionDenialReason.DeviceNotCompliant, ex.Reason);
+        // Named for what the check actually proves: the token came from a device-bound flow on a
+        // registered device. It is not evidence of Intune compliance — see the auth-context tests.
+        Assert.Equal(SessionDenialReason.DeviceNotBound, ex.Reason);
+    }
+
+    [Fact]
+    public async Task Without_an_auth_context_configured_a_device_bound_token_is_enough()
+    {
+        // The default deployment shape: no authentication context set, so behaviour is unchanged.
+        var h = new Harness();
+
+        var grant = await h.Service.IssueAsync(h.Analyst(), h.Request("westeurope"), default);
+
+        Assert.NotEqual(Guid.Empty, grant.SessionId);
+    }
+
+    [Fact]
+    public async Task A_required_auth_context_is_demanded_even_from_a_device_bound_token()
+    {
+        // A deviceid proves registration, not compliance: a registered device failing its Intune
+        // policy emits exactly the same claim. When the deployment binds a Conditional Access
+        // policy to an authentication context, the token must carry it.
+        var h = new Harness(authContextId: "c1");
+        var registeredButUnproven = h.Analyst();
+
+        var ex = await Assert.ThrowsAsync<SessionAuthorizationException>(
+            () => h.Service.IssueAsync(registeredButUnproven, h.Request("westeurope"), default));
+
+        Assert.Equal(SessionDenialReason.AuthenticationContextRequired, ex.Reason);
+    }
+
+    [Fact]
+    public async Task A_token_carrying_the_required_auth_context_is_issued_a_session()
+    {
+        var h = new Harness(authContextId: "c1");
+        var stepped = h.Analyst() with { AuthenticationContexts = new HashSet<string> { "c1" } };
+
+        var grant = await h.Service.IssueAsync(stepped, h.Request("westeurope"), default);
+
+        Assert.NotEqual(Guid.Empty, grant.SessionId);
+    }
+
+    [Fact]
+    public async Task A_different_auth_context_does_not_satisfy_the_requirement()
+    {
+        // Another policy's context must not stand in for the compliance one.
+        var h = new Harness(authContextId: "c1");
+        var wrongContext = h.Analyst() with { AuthenticationContexts = new HashSet<string> { "c2" } };
+
+        var ex = await Assert.ThrowsAsync<SessionAuthorizationException>(
+            () => h.Service.IssueAsync(wrongContext, h.Request("westeurope"), default));
+
+        Assert.Equal(SessionDenialReason.AuthenticationContextRequired, ex.Reason);
     }
 
     [Theory]
@@ -137,7 +189,7 @@ public class SessionServiceTests
 
     private sealed class Harness
     {
-        public Harness()
+        public Harness(string authContextId = "")
         {
             var regionPolicy = new RegionPolicy(
                 ["westeurope", "northeurope", "germanywestcentral", "francecentral"],
@@ -147,7 +199,7 @@ public class SessionServiceTests
             Clock = new FakeClock(T0);
             Service = new SessionService(
                 regionPolicy, issuer, Repository, new StubEgressDirectory(), Audit,
-                Options.Create(new SessionServiceOptions()), Clock);
+                Options.Create(new SessionServiceOptions { RequiredAuthContextId = authContextId }), Clock);
         }
 
         public CertificateAuthority Ca { get; }

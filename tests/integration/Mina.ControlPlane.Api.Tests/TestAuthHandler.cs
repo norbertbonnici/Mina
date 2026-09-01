@@ -9,7 +9,7 @@ namespace Mina.ControlPlane.Api.Tests;
 /// <summary>
 /// Test authentication scheme standing in for Entra. It reads identity from request headers so
 /// each test can present a chosen principal without a real token:
-///   X-Test-Oid, X-Test-Upn, X-Test-Roles (comma-separated), X-Test-Device.
+///   X-Test-Oid, X-Test-Upn, X-Test-Roles (comma-separated), X-Test-Device, X-Test-Acrs.
 /// The role claim type is "roles" to match how Microsoft.Identity.Web surfaces app roles, so the
 /// production authorization policy is exercised unchanged.
 /// </summary>
@@ -37,6 +37,15 @@ public sealed class TestAuthHandler(
         if (!string.IsNullOrEmpty(device))
         {
             claims.Add(new Claim("deviceid", device));
+        }
+
+        // Conditional Access authentication contexts, as Entra emits them when a policy bound to
+        // that context was satisfied for the token.
+        var acrs = Request.Headers["X-Test-Acrs"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(acrs))
+        {
+            claims.AddRange(acrs.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(value => new Claim("acrs", value)));
         }
 
         var roles = Request.Headers["X-Test-Roles"].FirstOrDefault();

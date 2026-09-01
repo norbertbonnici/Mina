@@ -194,7 +194,7 @@ public class SensitiveSessionServiceTests
     }
 
     [Fact]
-    public async Task Expiry_also_closes_an_approval_that_was_never_activated()
+    public async Task Expiry_closes_an_unused_approval_without_taking_the_analysts_session()
     {
         var h = new Harness();
         var request = await h.RequestAsync();
@@ -203,8 +203,15 @@ public class SensitiveSessionServiceTests
         h.Clock.Advance(TimeSpan.FromMinutes(30));
         Assert.Equal(1, await h.ExpireDueAsync());
 
+        // The approval lapses, so nothing can be activated on it afterwards (AC-011)...
         var view = await h.Service.GetAsync(h.Analyst, request.RequestId, default);
         Assert.Equal(SensitiveSessionState.Ended, view.State);
+
+        // ...but D-06a: it was never activated, so it suppressed nothing and there is no
+        // suppressed activity to stop. Ending the analyst's normally logged session here punished
+        // them for using the approved workflow.
+        Assert.Equal(SessionState.Active, h.Session.State);
+        Assert.Equal(SessionMode.Normal, h.Session.Mode);
     }
 
     [Fact]

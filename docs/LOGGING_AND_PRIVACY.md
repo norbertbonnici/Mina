@@ -52,7 +52,9 @@ become an unsupervised instrument against analysts).
 - Node acknowledgement is verified; a control-plane/node mismatch raises a critical event (N5),
   and any records mis-collected during an approved suppression window are purged under a
   DPO-supervised procedure.
-- Expiry terminates the session (proposed default, D-06); C1/C2 remain complete throughout.
+- Expiry terminates the session when suppression was activated (D-06, as amended by D-06a
+  2026-09-01: an approval that lapsed unused does not end the analyst's normal session); C1/C2
+  remain complete throughout.
 - No permanent exemptions.
 
 ## 5. Wazuh

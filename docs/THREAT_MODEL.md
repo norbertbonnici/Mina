@@ -101,7 +101,7 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 | Analyst disables logging locally | Telemetry originates at egress node, not endpoint; nothing to disable client-side (ADR-0002 Opt 1) |
 | Analyst obtains suppression without approval | Server-side state machine; activation requires APPROVED record, approver ≠ requester (AC-010) |
 | Approval never expires | TTL mandatory, expiry terminates session, scheduler + clock-skew tests (AC-011) |
-| Egress node becomes open proxy | mTLS + session allowlist; no unauthenticated listener; external scans (AC-016) |
+| Egress node becomes open proxy | mTLS against the internal CA; no unauthenticated listener; destination deny-list for private/link-local space; external scans (AC-016). The node does **not** check a session allowlist before admitting a tunnel, so a revoked session's certificate works until it expires (≈60 min) — backlog M4-11 |
 | Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017) |
 | Entra token stolen | Short session certs renewable only with fresh device-bound tokens; revocation ≤30 s at node |
 | Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC |

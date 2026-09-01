@@ -10,16 +10,26 @@ namespace Mina.ControlPlane.Application.Sessions;
 /// <param name="UserPrincipalName">UPN / preferred_username.</param>
 /// <param name="DeviceId">Entra device id (deviceid claim), if present.</param>
 /// <param name="Roles">App roles from the token.</param>
-/// <param name="DeviceCompliant">
-/// Whether the device meets compliance. Conditional Access is the authoritative gate at token
-/// issuance (SR-007); this flag lets the control plane additionally refuse if the signal is absent.
+/// <param name="DeviceBound">
+/// Whether the token was issued through a device-bound flow, i.e. it carries a <c>deviceid</c>
+/// claim. This proves the device is Entra-<em>registered</em> and that the token came from the
+/// WAM/PRT path. It says nothing about Intune compliance: a registered device that is actively
+/// non-compliant produces exactly the same claim. Compliance is proved by
+/// <paramref name="AuthenticationContexts"/> when an auth context is configured.
+/// </param>
+/// <param name="AuthenticationContexts">
+/// Conditional Access authentication-context ids from the <c>acrs</c> claim. Entra puts a value
+/// here only when a CA policy bound to that auth context was actually satisfied for this token, so
+/// requiring one is how a resource API can demand that the "require compliant device" grant was
+/// evaluated — rather than assuming a policy exists somewhere in the tenant.
 /// </param>
 public sealed record SessionPrincipal(
     string UserObjectId,
     string UserPrincipalName,
     string? DeviceId,
     IReadOnlySet<string> Roles,
-    bool DeviceCompliant);
+    bool DeviceBound,
+    IReadOnlySet<string>? AuthenticationContexts = null);
 
 /// <summary>A request to open a session: the chosen region and the endpoint-generated CSR.</summary>
 /// <param name="Region">Requested egress region (validated against <c>RegionPolicy</c>).</param>
@@ -43,7 +53,20 @@ public sealed record SessionGrant(
 public enum SessionDenialReason
 {
     NotAuthorisedRole,
-    DeviceNotCompliant,
+
+    /// <summary>
+    /// The token carries no <c>deviceid</c>, so it was not obtained through a device-bound flow.
+    /// Previously called <c>DeviceNotCompliant</c>, which claimed more than the check performs.
+    /// </summary>
+    DeviceNotBound,
+
+    /// <summary>
+    /// A Conditional Access authentication context is required and the token does not carry it.
+    /// Answered with a claims challenge rather than a flat refusal, so a compliant device can step
+    /// up silently; a device that cannot satisfy the policy simply never gets the claim.
+    /// </summary>
+    AuthenticationContextRequired,
+
     RegionNotSelectable,
     InvalidCertificateRequest,
     NotSessionOwner,

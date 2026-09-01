@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.Sessions;
@@ -51,7 +52,8 @@ public static class SessionEndpoints
     }
 
     private static async Task<IResult> IssueAsync(
-        IssueSessionDto dto, ClaimsPrincipal user, SessionService sessions, MinaMetrics metrics, CancellationToken ct)
+        IssueSessionDto dto, ClaimsPrincipal user, SessionService sessions, MinaMetrics metrics,
+        IOptions<SessionServiceOptions> options, CancellationToken ct)
     {
         // Bound the region before it reaches a metric dimension or an audit field: an unbounded
         // client value would inflate metric cardinality, could carry a destination into operational
@@ -81,7 +83,7 @@ public static class SessionEndpoints
             // The reason is a platform fact (role, device, region), never anything about the
             // analyst's research, so it is safe as a metric dimension.
             metrics.SessionEstablishFailed(dto.Region, ex.Reason.ToString());
-            return Problem(ex);
+            return Problem(ex, options.Value);
         }
         catch (SessionStateException ex)
         {
@@ -90,14 +92,15 @@ public static class SessionEndpoints
     }
 
     private static async Task<IResult> RenewAsync(
-        Guid id, RenewSessionDto dto, ClaimsPrincipal user, SessionService sessions, CancellationToken ct)
+        Guid id, RenewSessionDto dto, ClaimsPrincipal user, SessionService sessions,
+        IOptions<SessionServiceOptions> options, CancellationToken ct)
     {
         if (!TryDecodeCsr(dto.CsrPem, out var csr))
         {
             return Results.Problem("Body must contain a PEM certificate signing request.", statusCode: 400);
         }
 
-        return await ExecuteAsync(async () =>
+        return await ExecuteAsync(options.Value, async () =>
         {
             var grant = await sessions.RenewAsync(user.ToSessionPrincipal(), id, csr, ct);
             return Results.Ok(ToResponse(grant));
@@ -105,17 +108,20 @@ public static class SessionEndpoints
     }
 
     private static async Task<IResult> EndAsync(
-        Guid id, ClaimsPrincipal user, SessionService sessions, CancellationToken ct)
+        Guid id, ClaimsPrincipal user, SessionService sessions,
+        IOptions<SessionServiceOptions> options, CancellationToken ct)
     {
-        return await ExecuteAsync(async () =>
+        return await ExecuteAsync(options.Value, async () =>
         {
             await sessions.EndAsync(user.ToSessionPrincipal(), id, SessionEndReason.EndedByUser, ct);
             return Results.NoContent();
         });
     }
 
-    private static IResult Problem(SessionAuthorizationException ex) => ex.Reason switch
+    private static IResult Problem(SessionAuthorizationException ex, SessionServiceOptions options) => ex.Reason switch
     {
+        SessionDenialReason.AuthenticationContextRequired =>
+            new ClaimsChallengeResult(options.RequiredAuthContextId),
         // A session that does not exist and a session belonging to someone else answer identically.
         // Anything else is an existence oracle: an empty 404 for one and a problem+json "Denied:
         // NotSessionOwner" for the other tells an authenticated analyst which ids are real. The
@@ -127,7 +133,8 @@ public static class SessionEndpoints
         _ => Results.Problem($"Denied: {ex.Reason}", statusCode: StatusCodes.Status403Forbidden),
     };
 
-    private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)
+    private static async Task<IResult> ExecuteAsync(
+        SessionServiceOptions options, Func<Task<IResult>> action)
     {
         try
         {
@@ -135,7 +142,7 @@ public static class SessionEndpoints
         }
         catch (SessionAuthorizationException ex)
         {
-            return Problem(ex);
+            return Problem(ex, options);
         }
         catch (SessionStateException ex)
         {

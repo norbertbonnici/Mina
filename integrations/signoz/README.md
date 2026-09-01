@@ -86,7 +86,8 @@ exported. That is the local-development default.
   telemetry.
 - `mina_suppression_mismatches_total > 0` — a node is collecting under an approved suppression
   (also a critical audit event; see EVENT_SCHEMAS).
-- `mina_session_establish_failures_total` by `reason` — a spike in `DeviceNotCompliant` or
+- `mina_session_establish_failures_total` by `reason` — a spike in `DeviceNotBound`,
+  `AuthenticationContextRequired` (devices failing the Conditional Access compliance policy) or
   `RegionNotSelectable` usually means a policy or stamp problem, not user error.
 - Session establishment p95 latency, and control-plane request duration, against the SLOs in
   `docs/OPERATIONS.md`.

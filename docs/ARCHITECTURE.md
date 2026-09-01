@@ -138,13 +138,39 @@ Endpoint enforcement design (variant C2, recommended):
   managed identities (no client secrets anywhere in the product).
 - **Conditional Access**: policy targeting the Mina app requiring compliant (Intune) device and
   the org's MFA baseline. Device identity/compliance is evaluated at token issuance via the
-  WAM/PRT flow; the control plane additionally validates the device claims in the token and
-  records the device ID per session (FR-003, SR-007).
+  WAM/PRT flow; the control plane records the device ID per session (FR-003, SR-007).
+
+  What the control plane can and cannot see, stated exactly, because the distinction has been
+  misread before: an Entra access token carries **no Intune compliance claim**. A `deviceid` claim
+  proves the device is Entra-*registered* and that the token came from a device-bound flow — a
+  registered device that is actively failing its compliance policy emits the same claim. The
+  control plane therefore refuses a token that is not device-bound (`DeviceNotBound`), which is a
+  real control but not a compliance check.
+
+  Compliance is proved by **Conditional Access authentication context**. An auth context (say `c1`)
+  is defined in the tenant, a CA policy granting on "device marked as compliant" is bound to it, and
+  `Mina:Session:RequiredAuthContextId` is set to that value. Entra then emits the id in the token's
+  `acrs` claim only when that policy was actually satisfied, and the control plane requires it —
+  answering `401` with a `WWW-Authenticate: Bearer error="insufficient_claims"` challenge otherwise,
+  so a compliant device steps up silently from its PRT. This is fail-closed and self-verifying in a
+  way the `deviceid` check is not: delete, mis-scope or add an exclusion to the policy and the claim
+  stops arriving and sessions stop being issued.
+
+  **Deployment prerequisite.** The setting is empty by default because it has a tenant-side
+  precondition (the auth context and the policy bound to it, backlog M2-1). Setting it before that
+  exists refuses every session — the safe direction, but a deployment step rather than a default.
+  The endpoint agent must also answer the challenge by re-acquiring with `.WithClaims(...)`; the
+  current agent uses a configured-token stand-in and cannot, so this lands with the WAM broker in
+  M2-4. Until both are in place, compliance is enforced by Conditional Access alone and the
+  platform cannot detect a missing policy.
 - **Session lease model**: Entra access tokens are minutes-to-an-hour artefacts; research
   sessions need tighter control. The control plane therefore issues its own **session-bound
   client certificate** (TTL ≈ 60 min, renewable only with a fresh valid Entra token) plus a
-  session record with state. Revocation = stop renewing + push removal to nodes (effective in
-  seconds via the push channel, ≤30 s via pull). No CAE dependency.
+  session record with state. Revocation = stop renewing. The certificate already
+  issued stays valid until its TTL elapses, so the revocation window today is that TTL (≈60 min);
+  the node's allowlist governs suppression, not admission, and pushing a removal to nodes does not
+  currently refuse an established or re-offered certificate. Node-side allowlist enforcement, which
+  would bring revocation down to the push/pull interval, is backlog M4-11. No CAE dependency.
 - No local passwords, no separate credential store, break-glass excepted (§12).
 
 ```mermaid
@@ -160,7 +186,7 @@ sequenceDiagram
     A->>E: Silent token via WAM broker (existing session)
     E-->>A: Access token (user, roles, device claims)
     A->>C: POST /sessions {region, CSR} + token
-    C->>C: Authorise: role, region approved, device compliant
+    C->>C: Authorise: role, region approved, device-bound token (+ CA auth context when configured)
     C-->>A: Session ID + client cert (60 min) + egress endpoint
     C->>X: Push session allowlist entry
     C->>C: Audit: session_started → Wazuh
@@ -186,7 +212,7 @@ Fail-closed (FR-007, AC-004) is layered — every failure lands on "no traffic",
 |---|---|
 | Tunnel drops / egress unreachable | Agent closes the loopback listener; browser gets proxy errors; fixed proxy config cannot fall back to DIRECT; agent retries and surfaces state in tray |
 | Agent killed / crashes | Loopback proxy gone ⇒ browser has no path; C2 WFP rules persist independently of the agent process, so even flag-stripped launches stay contained |
-| Session revoked / expired | Control plane stops renewal + node drops the allowlist entry ⇒ tunnel refused; loopback closes |
+| Session revoked / expired | Control plane stops renewal; the already-issued certificate keeps working until it expires, so the revocation window is the lease TTL (≈60 min), not the allowlist refresh interval. The node's allowlist governs suppression, not admission — Envoy admits any unexpired certificate chaining to the internal CA. Loopback closes when the agent's renewal is refused. Node-side allowlist enforcement is backlog M4-11 |
 | Control plane down | Existing sessions continue until cert expiry (bounded), no new sessions; policy: certificates are short so exposure is capped |
 | Research browser launched outside the agent | C2: WFP allows only loopback ⇒ nothing works until a session exists; C1 fallback: detective controls only (ADR-0001) |
 
@@ -200,7 +226,7 @@ Fail-closed (FR-007, AC-004) is layered — every failure lands on "no traffic",
 | WebRTC | Browser IP-handling forced to proxy-only/non-proxied-UDP-disabled for the research instance; C2 WFP blocks its UDP anyway; mDNS ICE obfuscation remains default | WebRTC harness page, AC-007 |
 | QUIC/HTTP3 | Disabled for the research instance (flag/policy); WFP blocks UDP/443 regardless | Network capture during e2e, AC-006/007 |
 | Ordinary apps captured by mistake | Only the research image path has WFP rules; only the research instance has the proxy config; nothing else references the agent | Negative-path test: normal Edge/apps exit via corp IP, AC-002 |
-| Open proxy | Envoy requires platform mTLS + live session; LB exposes 443 only; optional source-CIDR restriction | External open-proxy scan, AC-016 |
+| Open proxy | Envoy requires platform mTLS (a client certificate chaining to the internal CA); LB exposes 443 only; optional source-CIDR restriction. Note this authenticates the *platform*, not a particular live session — see the revocation row | External open-proxy scan, AC-016; real-Envoy client-authentication test |
 | Egress → corp | NSG/route denies RFC1918 + corp CIDRs from egress subnets; no peering to corp | Automated reachability probes from nodes, AC-017 |
 
 ## 7. Session and sensitive-session lifecycle

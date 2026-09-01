@@ -10,7 +10,8 @@ authenticated mTLS tunnel to an Azure egress node (ADR-0001 Option C).
    existing Windows sign-in — FR-002).
 2. It generates an EC key pair **on the endpoint** and sends only a CSR to the control plane. The
    private key never leaves the device.
-3. The control plane authorises role, device compliance and region (AC-008) and returns a
+3. The control plane authorises role, that the token is device-bound, the Conditional Access
+   authentication context when one is configured, and region (AC-008), and returns a
    short-lived certificate bound to the session, plus the egress endpoint for the chosen region.
 4. The agent opens the loopback proxy. Browser CONNECTs are forwarded over mTLS to the egress,
    which resolves the hostname and dials out — so DNS never happens on the endpoint.

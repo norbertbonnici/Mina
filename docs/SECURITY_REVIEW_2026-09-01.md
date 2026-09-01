@@ -62,12 +62,17 @@ finishes the handshake before judging the client, so the refusal arrives on the 
 `AuditGatesGovernanceActionsTests` proves the fail-closed property by making the audit insert fail
 at the database.
 
-## Confirmed but not yet fixed
+## Confirmed and now resolved by decision
 
-- **medium — device compliance is inferred from the presence of a `deviceid` claim**, which
-  indicates Entra registration, not Intune compliance. **Left for the owner** — see the decisions
-  below. Correcting the document and tightening the check are both posture choices, and this
-  repository has already set the precedent that a correction of this shape is the owner's call.
+- **medium — device compliance was inferred from the presence of a `deviceid` claim**, which
+  indicates Entra registration, not Intune compliance. Resolved by **D-13**: the control plane now
+  requires a Conditional Access authentication context (`acrs`) when one is configured, answering a
+  claims challenge otherwise, and the misleading names are gone — `DeviceCompliant` is
+  `DeviceBound`, and `DeviceNotCompliant` is `DeviceNotBound`. The check is implemented and tested
+  but **inert until the tenant defines the auth context and binds a compliant-device policy to it**
+  (M2-1), and the agent cannot answer a challenge until the WAM broker lands (M2-4). Until then,
+  compliance rests on Conditional Access alone and a missing policy is undetectable — which is what
+  makes M2-1 a production gate rather than a convenience.
 
 All remaining findings have now been verified: 26 were put to an independent skeptic reading the
 code as it stands after the fixes above; 14 survived and 12 were refuted. After merging duplicates,
@@ -124,15 +129,15 @@ suppression to engage without a distinct approver, and no governance action that
 
 All five items in this section were closed in the fourth pass, except the two that are decisions:
 
-- **Expiry of a never-activated approval revokes the analyst's live, never-suppressed session.**
-  Errs fail-closed, but teaches analysts to avoid the approved workflow. Gating the revoke on
-  `request.ActivatedAt is not null` would fix it — deliberately *not* done, because D-06 was decided
-  by the project owner as "expiry terminates the session" and narrowing it is a change to that
-  decision, not a bug fix. Raise it as a D-06 amendment or leave it as is.
+- **Expiry of a never-activated approval revoked the analyst's live, never-suppressed session.**
+  Resolved by **D-06a** (2026-09-01): termination now applies only to an approval that was actually
+  activated. An approval that lapsed unused suppressed nothing, so there is no suppressed activity
+  to stop, and ending a normally logged session taught analysts to avoid the approved workflow.
+  ADR-0003 and PHASE0_DECISIONS record the amendment.
 - **Undecided requests never lapse.** The queue is now bounded, which was the defect; whether a
   request should *lapse* is a workflow policy with no security consequence — per ADR-0003 the TTL
   anchors at approval, so a stale request approved later still gets a full fresh window, and a
-  request whose session has ended cannot be activated at all. Left for the owner.
+  request whose session has ended cannot be activated at all. Still open, still the owner's call.
 
 ### Corrections to this document
 
@@ -142,9 +147,12 @@ Two claims made above were wrong when written and are corrected here rather than
   suppression-mismatch path until finding #18 was fixed. It is now true and, for the first time,
   tested.
 - "probing is audited", given as the reason the existence oracle was only low severity, was true
-  only of hits. A lookup *miss* is still recorded nowhere — see the decision below.
+  only of hits. A lookup *miss* is recorded nowhere, and per **D-15** that stays as it is: making it
+  symmetric would give an authenticated user a lever on an append-only store whose rows cannot be
+  deleted under current policy (M4-9). The severity rating stands on the ids being unguessable, not
+  on probing being audited.
 
-## Surfaced, not resolved: the session allowlist is not enforced at the node
+## Resolved by decision D-14: the session allowlist is not enforced at the node
 
 Found while building the client-authentication test, and left exactly as it is because CLAUDE.md
 requires a code-versus-documentation conflict to be surfaced rather than settled.
@@ -170,9 +178,10 @@ the push channel, ≤30 s via pull", and `docs/BACKLOG.md` M2-3 records push-bas
 outstanding while saying "the pull interval bounds the window today". For admission it does not: the
 certificate TTL does.
 
-Either the node must enforce the allowlist (Envoy-side session checking, which is real work and
-needs a design), or the three documents must describe the certificate TTL as the revocation bound.
-That is a decision for the project owner.
+**D-14 (2026-09-01, project owner): correct the documents.** ARCHITECTURE §4 and its failure-mode
+table, and the THREAT_MODEL B-series row, now state that revocation is bounded by the certificate
+TTL and that the allowlist governs suppression rather than admission. Node-side enforcement, which
+would bring revocation down to the push/pull interval, stays available as backlog M4-11.
 
 ## Deliberate residual risk
 

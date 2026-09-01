@@ -956,8 +956,12 @@
           "Microsoft.Extensions.Hosting": "[10.0.11, )",
           "Microsoft.Extensions.Hosting.WindowsServices": "[10.0.11, )",
           "Microsoft.Extensions.Http": "[10.0.11, )",
+          "Mina.EndpointAgent.Ipc": "[1.0.0, )",
           "Mina.Observability": "[1.0.0, )"
         }
+      },
+      "mina.endpointagent.ipc": {
+        "type": "Project"
       },
       "mina.observability": {
         "type": "Project",
