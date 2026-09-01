@@ -200,6 +200,30 @@ test missed, and three regressions the fourth pass had introduced.
 | 30 | medium | The fourth pass corrected some of the revocation and push-channel claims and missed others: ARCHITECTURE still said Envoy requires "a currently valid session ID" and described a push channel that does not exist, THREAT_MODEL still promised "revocation ≤30 s at node" two rows below the row denying it, and TEST_STRATEGY still specified a revoked-certificate-reuse test that D-14 makes unpassable. | All corrected. `EVENT_SCHEMAS` also now marks `auth_success`/`auth_failure`/`session_expired` as **not emitted** — a SOC building the documented correlation rules would have built rules that never fire. |
 | 31 | medium | D-15 was decided on the statement that a non-owner attempt on an *existing* record is audited. True for sessions, false for the suppression routes: the `NotRequester` checks threw with no audit at all, and the sink had no denial method. | `RequesterMismatchAsync` records an `authz_denied` with `reason: NotRequester` on activate and cancel, making the behaviour match what D-15 actually chose. Misses stay unaudited, as decided. |
 
+### Verification outcome
+
+The two commits above were put to a five-lens adversarial pass with an independent judge per
+candidate: **54 candidate findings, 10 confirmed, 44 refuted.** Seven of the ten were the defects
+already listed as #23–#31. The remaining three:
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 32 | low | `ActivateAsync` and `CancelAsync` were the only transitions with no service-level role check — their only role gate was the HTTP route policy, which is built from `Mina:Session:AnalystRole` while the workflow reads `Mina:SensitiveSession:AnalystRole`. Two keys equal by default and not guaranteed to stay equal. | `RequireRole` added to both, matching every other transition. |
+| 33 | low | The new approver-queue truncation test shared the class's single SQLite database with six other tests that also write pending rows, so it was really asserting on the three oldest rows in the whole table. It passed by accident of ordering. | Given its own database. |
+| — | low | The approver queue is bounded and reports truncation but has no paging, and nothing caps requests per analyst, so a flood can push a colleague's request past the page. Tracked as **M4-13**; the request stays decidable by id, so this is discoverability in the UI, not decidability. | Not fixed; backlog. |
+
+One finding raised during the pass was **refuted, and is recorded because the refutation corrects a
+claim made in this review**: that suppression approval sits outside the device-posture gate. It is
+true that `DeviceBound` and `AuthenticationContexts` are read only in `SessionService.AuthoriseAsync`
+— but that asymmetry is by design, not a hole. Conditional Access targeting the Mina app is the gate
+that keeps unmanaged devices out, evaluated by Entra on every token issuance including refresh-token
+redemption; the application-layer checks exist to make a *deleted or mis-scoped* CA policy visible,
+which is a session-issuance concern. Approval happens in the management UI over a browser OIDC
+sign-in, which carries `deviceid` only when the browser session is PRT-bound — so enforcing
+`DeviceBound` in `ApproveAsync` would break the shipped approvals screen without adding a control.
+Device posture for the management UI is a Conditional Access policy on that application (M2-1), not
+an application-code check.
+
 ## Deliberate residual risk
 
 **Suppressed sessions' destinations still appear in Envoy's own access log on the node.** Envoy has

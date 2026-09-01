@@ -176,7 +176,13 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
     [Fact]
     public async Task A_queue_longer_than_the_page_is_reported_as_truncated()
     {
-        await using (var context = _db.CreateContext())
+        // Its own database, not the class fixture. This test asserts on *which* rows come back and
+        // in what order, and the class fixture is one SQLite database shared by every test in the
+        // class with nothing truncating between them — so against the shared fixture it was really
+        // asserting on the three oldest pending rows in the whole table, which other tests also
+        // write. It passed, but only by accident of ordering.
+        using var db = new SqliteDatabaseFixture();
+        await using (var context = db.CreateContext())
         {
             var repository = new EfSensitiveSessionRepository(context);
             for (var i = 0; i < 5; i++)
@@ -189,7 +195,7 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
             }
         }
 
-        await using var verify = _db.CreateContext();
+        await using var verify = db.CreateContext();
         var repo = new EfSensitiveSessionRepository(verify);
 
         var page = await repo.ListPendingAsync(3, default);

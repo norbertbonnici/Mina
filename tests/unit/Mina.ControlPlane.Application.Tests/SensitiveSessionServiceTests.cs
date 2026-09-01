@@ -139,10 +139,20 @@ public class SensitiveSessionServiceTests
         var request = await h.RequestAsync();
         await h.Service.ApproveAsync(h.Approver, request.RequestId, TimeSpan.FromHours(1), default);
 
+        // Another analyst: holds the role, so this isolates the requester check rather than
+        // tripping on the role first. Activation's authority is the approval someone else granted,
+        // and it belongs to the analyst who asked — nobody else can spend it.
+        var otherAnalyst = h.Analyst with { UserObjectId = "oid-other-analyst" };
+
         var ex = await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
-            () => h.Service.ActivateAsync(h.Approver, request.RequestId, default));
+            () => h.Service.ActivateAsync(otherAnalyst, request.RequestId, default));
 
         Assert.Equal(SensitiveSessionDenialReason.NotRequester, ex.Reason);
+
+        // And the approver, who granted it, cannot activate it either — they lack the analyst role.
+        var approver = await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
+            () => h.Service.ActivateAsync(h.Approver, request.RequestId, default));
+        Assert.Equal(SensitiveSessionDenialReason.NotAuthorisedRole, approver.Reason);
     }
 
     [Fact]
@@ -281,6 +291,30 @@ public class SensitiveSessionServiceTests
         Assert.Equal(SensitiveSessionState.Ended,
             (await h.Service.GetAsync(h.Analyst, request.RequestId, default)).State);
         Assert.NotEqual(SessionState.Revoked, h.Session.State);
+    }
+
+    [Fact]
+    public async Task Activation_and_cancellation_require_the_analyst_role_at_the_service()
+    {
+        // Not merely the route policy: that is built from Mina:Session:AnalystRole while this
+        // workflow reads Mina:SensitiveSession:AnalystRole. Equal by default, and nothing keeps
+        // them equal — so the check belongs where the decision is made.
+        var h = new Harness();
+        var request = await h.RequestAsync();
+        await h.Service.ApproveAsync(h.Approver, request.RequestId, TimeSpan.FromHours(1), default);
+
+        var roleless = h.Analyst with { Roles = new HashSet<string>() };
+
+        var activate = await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
+            () => h.Service.ActivateAsync(roleless, request.RequestId, default));
+        Assert.Equal(SensitiveSessionDenialReason.NotAuthorisedRole, activate.Reason);
+
+        var cancel = await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
+            () => h.Service.CancelAsync(roleless, request.RequestId, default));
+        Assert.Equal(SensitiveSessionDenialReason.NotAuthorisedRole, cancel.Reason);
+
+        // The suppression never engaged.
+        Assert.Equal(SessionMode.Normal, h.Session.Mode);
     }
 
     private sealed class Harness

@@ -145,6 +145,12 @@ public sealed class SensitiveSessionService(
     {
         ArgumentNullException.ThrowIfNull(principal);
 
+        // Every other transition re-checks the role here rather than trusting the route. These two
+        // did not, so the only role check on them came from the HTTP policy — which is built from
+        // Mina:Session:AnalystRole while this workflow's own role is Mina:SensitiveSession:AnalystRole.
+        // Two keys that are equal by default and need not stay equal.
+        RequireRole(principal, _options.AnalystRole);
+
         var request = await RequireRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
 
         // Ownership before state, matching ActivateAsync. The aggregate checks state first, so
@@ -173,6 +179,7 @@ public sealed class SensitiveSessionService(
         SessionPrincipal principal, Guid requestId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(principal);
+        RequireRole(principal, _options.AnalystRole);
 
         var request = await RequireRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         if (!request.IsRequester(principal.UserObjectId))
