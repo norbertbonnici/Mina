@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Hosting concerns shared by the control-plane API and the management portal. Since ADR-0006
+       both run on premises behind the same reverse proxy, so the things App Service used to provide
+       have to be asserted identically by both — and asserted in one place, because two hosts that
+       disagree about what counts as a safe configuration is exactly the drift this guards against. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

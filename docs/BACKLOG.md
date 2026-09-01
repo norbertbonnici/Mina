@@ -58,6 +58,20 @@ remainder is tracked there and should be scheduled before the production gate �
 binding node identity to a region, connecting Envoy's access log to the sidecar, and the
 suppressed-hostname exposure in the node's own log.
 
+## M6 — On-premises move (ADR-0006, added 2026-09-01)
+
+| ID | Story | Refs | Size |
+|---|---|---|---|
+| M6-1 | **Egress stamp cannot currently reach on-premises at all.** `snet-nodes` takes the entire VNet CIDR (`modules/egress-stamp/main.tf:49`), so there is no room for a `GatewaySubnet`, and an NSG allow rule grants permission rather than reachability — with only a NAT gateway attached, traffic to an RFC1918 address still takes the default route to the internet. Needs a corp-connected hub VNet, peering with remote-gateway use, a UDR for the single control-plane address, and an NSG allow ordered ahead of the corp deny rules. The hub does not exist in `infra/terraform` today | ADR-0006, AC-017 | L |
+| M6-2 | Proxmox provisioning as code for the control-plane VMs, the DMZ VLAN and the reverse proxy, to the standard AC-018 demands of the Azure side. Nothing in the repo provisions on-premises infrastructure today | AC-018, SR-011 | L |
+| M6-3 | Split the API into node-facing and corporate-facing listeners (ADR-0006 constraint 3). Today one Kestrel serves every endpoint, so the DMZ exposure would include the approvals UI and the audit read API | ADR-0006 | M |
+| M6-4 | Supply the control-plane address to the egress sidecar. `SidecarOptions.ControlPlaneBaseUrl` has no provisioning mechanism: it is absent from both appsettings files and from cloud-init | ADR-0006, M2-3 | S |
+| M6-5 | Arc-onboard the control-plane VMs and the SQL Server host; verify that `Authentication=Active Directory Default` genuinely works from an Arc-onboarded Proxmox host, since it is the single mechanism keeping SR-005 intact for the database | D-17, SR-005 | M |
+| M6-6 | Azure immutable-blob audit export sink, replacing the filesystem sink. The seam (`IAuditExportSink`) already exists and the host now refuses to start on the filesystem sink outside Development | D-18, AC-013 | M |
+| M6-7 | Rework AC-017 evidence and the tfsec/policy rule: both currently assert a blanket RFC1918 deny, which the scoped exception makes false. The replacement must assert the permitted set is exactly one host and port | AC-017, TEST_STRATEGY | M |
+| M6-8 | On-premises break-glass. Azure RBAC can stop an egress stamp but cannot touch a Proxmox-hosted API, UI or database, so regaining administrative control when Entra sign-in fails has no mechanism at all on the plane that now matters most | AC-015, M4-5 | M |
+| M6-9 | Operations rework: Proxmox host/cluster failure, on-premises SQL backup and restore, Arc agent failure (which breaks both SQL auth and Key Vault access with no stored credential to fall back on), and tunnel loss as a **control-plane availability** signal for the stamps rather than a telemetry one | OPERATIONS | M |
+
 ## M4 — Production hardening (Phase 4)
 
 | ID | Story | Refs | Size |

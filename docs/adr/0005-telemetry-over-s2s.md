@@ -1,6 +1,13 @@
 # ADR-0005: Telemetry delivery to Wazuh/SigNoz over the existing Check Point site-to-site tunnel
 
-- Status: **Accepted 2026-08-31** (directed by project owner, D-05); Check Point rule scoping to
+- Status: **Accepted 2026-08-31; largely SUPERSEDED by ADR-0006 (2026-09-01).** Read that ADR
+  first. Constraints 1–3 below described an Azure-hosted control plane and are no longer accurate:
+  the control plane is now on premises, so telemetry delivery to Wazuh and SigNoz is a local hop
+  that does not use the tunnel at all, and the tunnel's actual load is the reverse direction —
+  egress node to control plane. Constraint 1's promise that "research egress stamps stay off this
+  path entirely" is precisely what ADR-0006 changes, under its own narrower constraints. This
+  document is retained because it records why the tunnel was chosen and what was decided when; do
+  not cite its constraints as current controls. Originally accepted (directed by project owner, D-05); Check Point rule scoping to
   be confirmed with the FIAU network team before implementation (M3-5/6)
 - Date: 2026-08-31
 - Related: `docs/ARCHITECTURE.md` §10, `docs/EVENT_SCHEMAS.md`, `docs/LOGGING_AND_PRIVACY.md`

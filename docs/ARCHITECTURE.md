@@ -113,18 +113,37 @@ Endpoint enforcement design (variant C2, recommended):
 5. Agent self-monitoring: reports tamper indicators (WFP rule removal attempts, unexpected
    research-browser instances, proxy-port probes from foreign processes) as security events.
 
-### 3.2 Control plane (Azure, per environment)
+### 3.2 Control plane (on premises, FIAU Proxmox cluster — ADR-0006)
 
-- **Control-plane API** (ASP.NET Core, App Service): session issuance/renewal/termination;
-  region policy; sensitive-session state machine; internal-CA certificate issuance (signing key
-  in Key Vault, never exported); node config distribution; audit event write path.
-- **Management UI** (Blazor Server, App Service): approvals, session/health/audit visibility,
-  region policy administration. Entra sign-in, app-role authorisation, Conditional Access
-  (compliant device) enforced at the Entra layer.
-- **Azure SQL Database**: sessions, approvals, policy, audit events, hostname telemetry
-  (separate schema; see §10). TDE at rest; private endpoint; no public access.
-- **Key Vault**: internal CA key, Envoy server cert material, integration secrets. RBAC +
-  managed identities only; purge protection on.
+Since ADR-0006 the control plane runs on the FIAU's own infrastructure, in a **dedicated DMZ VLAN**
+rather than on the corporate LAN. That placement is a control, not a detail: egress nodes can reach
+one endpoint in this segment, so it is treated as reachable by a compromised node and firewalled
+from the corporate LAN accordingly.
+
+- **Control-plane API** (ASP.NET Core on Linux, Kestrel behind the DMZ reverse proxy): session
+  issuance/renewal/termination; region policy; sensitive-session state machine; internal-CA
+  certificate issuance (signing key in Key Vault, never exported); node config distribution; audit
+  event write path. **Two listeners with different exposure** (ADR-0006 constraint 3): the
+  node-facing listener carries only the allowlist and telemetry-ingest endpoints and is the only
+  surface reachable from the egress path; the portal, audit read and administrative endpoints are
+  reachable only from corporate workstations.
+- **Management UI** (Blazor static server rendering, same host family): approvals, session/health/
+  audit visibility, region policy administration. Entra sign-in, app-role authorisation,
+  Conditional Access (compliant device) enforced at the Entra layer. No longer internet-reachable,
+  which removes it from the D-07 ingress rationale.
+- **SQL Server on Proxmox, Azure Arc-enabled** (D-17): sessions, approvals, policy, audit events,
+  hostname telemetry (separate schema; see §10). Arc enablement is what keeps Entra authentication
+  and therefore the "no client secrets" property; encryption at rest and backup are now FIAU's to
+  configure rather than platform-managed.
+- **Azure Key Vault** (remains in Azure, D-18): internal CA key and Envoy server certificate
+  material. Reached outbound from the control-plane hosts using their Arc-enabled server managed
+  identity, so no credential is stored on premises either.
+- **Azure immutable blob storage** (remains in Azure, D-18): audit export anchors. On-premises
+  storage the same administrator controls cannot make an anchor tamper-evident.
+
+Both hosts must supply what App Service used to: forwarded-header handling behind the reverse
+proxy, a persisted Data Protection key ring, and configuration that is verified at startup — a
+missing connection string now refuses the host rather than selecting an in-memory store.
 - **Telemetry relay**: forwards audit/security events to Wazuh and OTLP telemetry to SigNoz
   (network path is decision D-05, §10.3).
 
@@ -369,8 +388,8 @@ confirmed with the network team before M3-5/6.
 |---|---|
 | Ordinary apps never use research egress | Proxy config + WFP rules exist only for the research browser image/instance |
 | Protected traffic never falls back to ordinary egress | Fixed proxy no-DIRECT; loopback gated on live session; C2 WFP default-block |
-| Research egress cannot reach corp/RFC1918 | Egress NSG + route deny; no peering; automated probes (AC-017) |
-| Management endpoints authenticated + rate-limited | Entra + CA on UI/API; App Service/ASP.NET rate limiting; nodes use managed-identity auth |
+| Research egress reaches exactly one corporate address | Scoped exception (ADR-0006): NSG + UDR permit one control-plane host and port, everything else in corporate space denied; Check Point policy enforces the same set independently; automated probes assert both the permitted flow and the denials (AC-017) |
+| Management endpoints authenticated, and unreachable from the egress path | Entra + Conditional Access on UI/API; the portal and audit read are not served on the node-facing listener at all (ADR-0006 constraint 3); nodes authenticate with a per-region app role |
 | No public unauthenticated proxy/forwarder | mTLS-only Envoy listener; 443-only LB; optional source-CIDR allowlist; external scans (AC-016) |
 
 ## 12. Break glass (management-only)

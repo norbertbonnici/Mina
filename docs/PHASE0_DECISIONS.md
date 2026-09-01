@@ -61,8 +61,21 @@ ARCHITECTURE §5.
 | D-14 | Node-side session allowlist versus documentation | **Correct the documentation.** Envoy admits any unexpired certificate chaining to the internal CA; the allowlist governs suppression, not admission, so revocation is bounded by the certificate TTL (≈60 min). ARCHITECTURE and THREAT_MODEL now say so. Node-side enforcement remains available as backlog M4-11 | 2026-09-01, project owner |
 | D-15 | Auditing session-id lookup misses | **Leave as is.** Only a non-owner attempt on an existing session is audited. Recording misses would give an authenticated user a lever on an append-only store whose rows cannot be deleted under current policy (M4-9) | 2026-09-01, project owner |
 
+## Decisions taken 2026-09-01 (on-premises move)
+
+| ID | Question | Decision | Provenance |
+|---|---|---|---|
+| D-16 | Where the control plane runs | **On premises in the FIAU Proxmox cluster** — portal, web server, service logs and SQL Server. Egress stamps stay in Azure. Egress nodes reach the control plane directly over the Check Point tunnel, which **reaches the CLAUDE.md stop-condition on routes into corporate networks**; approved by the owner and recorded in ADR-0006 with binding constraints | 2026-09-01, project owner |
+| D-17 | How the control plane authenticates to SQL | **Azure Arc-enable SQL Server** so Entra authentication works with no stored credential, preserving the "no client secrets anywhere in the product" property | 2026-09-01, project owner |
+| D-18 | Where the CA signing key and audit anchors live | **Both stay in Azure** — Key Vault for the signing key, immutable blob storage for export anchors. Proxmox offers no HSM and no write-once store, and both guarantees depend on hardware or platform enforcement. Reached outbound from the Arc-enabled control-plane hosts using their Arc managed identity | 2026-09-01, project owner |
+
 ## Standing stop-conditions (unchanged by any decision above)
 
 Production deployment approval; any TLS interception; any route from **research egress nodes**
 into corporate networks (ADR-0005 touches only the control-plane relay path); permanent logging
 exemptions; weakening Conditional Access/device compliance; new third-party SaaS dependencies.
+
+**One of these was reached and approved.** "Any route from research egress nodes into corporate
+networks" was exercised on 2026-09-01 by D-16 and is governed by ADR-0006's constraints. It is
+recorded here rather than removed from the list: the condition still applies to any *further*
+route, and a reviewer should be able to see that it was reached deliberately rather than eroded.

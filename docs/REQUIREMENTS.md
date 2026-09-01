@@ -49,10 +49,10 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 ## 4. Security requirements
 | ID | Requirement |
 |---|---|
-| SR-001 | Research egress nodes must not provide a route into internal corporate networks. |
+| SR-001 | Research egress nodes must not provide a route into internal corporate networks, **except the one scoped exception approved in ADR-0006**: node-initiated TLS to a single control-plane address and port in a DMZ segment. The exception is enforced twice (Azure NSG/UDR and Check Point policy) and every other corporate destination remains denied. |
 | SR-002 | No unauthenticated forwarding or open-proxy behaviour. |
 | SR-003 | Explicitly mitigate/test DNS, IPv6, WebRTC and fallback leaks. |
-| SR-004 | Use least privilege for Azure RBAC, applications, managed identities and administrators. |
+| SR-004 | Use least privilege for Azure RBAC, applications, managed identities and administrators — **and, since ADR-0006, for the on-premises plane: Proxmox administrative access, the SQL Server host and its sysadmin roles, and local OS accounts on the control-plane VMs.** |
 | SR-005 | Prefer managed identities and Key Vault over static credentials. |
 | SR-006 | Protect endpoint local IPC and configuration from ordinary-user tampering. |
 | SR-007 | Apply Entra Conditional Access/device compliance where feasible. |
@@ -70,7 +70,9 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 - Permanent logging exemptions are prohibited.
 
 ## 6. Operational requirements
-- Azure only.
+- **Hybrid (ADR-0006): control plane on the FIAU Proxmox cluster, research egress in Azure.** The
+  on-premises plane must be reproducible from source-controlled configuration to the same standard
+  AC-018 demands of the Azure side; a hand-built control plane would not satisfy it.
 - EU egress at launch.
 - At least two production egress regions are desirable for hardened production, subject to Phase 0 design/cost review.
 - Health monitoring, capacity monitoring and alerting must be defined before production.

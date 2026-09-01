@@ -1,11 +1,16 @@
 // Mina control-plane API: Entra-authenticated session issuance, renewal and termination, region
 // policy, CSR-based session-certificate signing, and the manager-approved suppression workflow.
 //
-// Sessions and approvals persist to Azure SQL when a connection string is configured, otherwise to
-// an in-memory store for local development (warned about at startup). The issuing CA is still the
-// ephemeral development CA — the Key Vault-backed provider is M2-2c and needs the Azure subscription.
+// Since ADR-0006 this runs on premises in the FIAU Proxmox cluster, not on Azure App Service.
+// Sessions and approvals persist to SQL Server (Arc-enabled, so Entra authentication works with no
+// stored credential) when a connection string is configured. The in-memory stores, the ephemeral CA
+// and the filesystem audit sink remain available as development stand-ins, but a host that is not
+// Development now refuses to start on one rather than warning and carrying on: configuration is
+// hand-delivered to a VM now, so a missing setting is a likely mistake rather than an impossible
+// one. The Key Vault-backed CA is still M2-2c.
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Mina.ControlPlane.Api.Configuration;
@@ -22,11 +27,19 @@ using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Domain.Telemetry;
+using Mina.ControlPlane.Hosting;
 using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
 using Mina.Observability;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Behind the DMZ reverse proxy the platform sees plain HTTP unless it is told otherwise (ADR-0006).
+builder.Services.Configure<ForwardedHeadersOptions>(
+    options => HostingGuard.ConfigureForwardedHeaders(options, builder.Configuration));
+
+var allowDevelopmentFallbacks = HostingGuard.DevelopmentFallbacksAllowed(
+    builder.Configuration, builder.Environment);
 
 // Operational telemetry to SigNoz. The scrub processors are part of this wiring, not optional.
 builder.Services.AddMinaObservability(builder.Configuration);
@@ -59,6 +72,11 @@ var sessionConnectionString = builder.Configuration.GetConnectionString("MinaDb"
 var usingInMemoryStore = string.IsNullOrWhiteSpace(sessionConnectionString);
 if (usingInMemoryStore)
 {
+    HostingGuard.RequireExplicitFallback(
+        allowDevelopmentFallbacks,
+        "in-memory session, approval, telemetry and audit stores that lose everything on restart",
+        "ConnectionStrings:MinaDb");
+
     builder.Services.AddSingleton<InMemorySessionRepository>();
     builder.Services.AddSingleton<ISessionRepository>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISessionQueries>(sp => sp.GetRequiredService<InMemorySessionRepository>());
@@ -83,6 +101,13 @@ else
 builder.Services.AddSingleton<IEgressDirectory, ConfiguredEgressDirectory>();
 builder.Services.AddScoped<ISessionAuditSink, PersistentSessionAuditSink>();
 builder.Services.AddSingleton(TimeProvider.System);
+// The signing key for every session certificate. The Key Vault-backed provider is M2-2c; until it
+// exists there is no production-capable CA, and starting without one would mint session
+// certificates from a key that is regenerated on every restart.
+HostingGuard.RequireExplicitFallback(
+    allowDevelopmentFallbacks,
+    "an ephemeral in-process certificate authority whose key is regenerated on every restart",
+    "the Key Vault-backed certificate authority (backlog M2-2c)");
 builder.Services.AddSingleton<ICertificateAuthorityProvider, DevelopmentCertificateAuthorityProvider>();
 
 builder.Services.AddSingleton(sp =>
@@ -115,6 +140,13 @@ builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddScoped<AuditChainVerifier>();
 builder.Services.AddScoped<AuditAnchorVerifier>();
 builder.Services.AddScoped<AuditExportService>();
+// Audit anchors must land in storage that can refuse an overwrite. A filesystem cannot, so the
+// tamper-evidence is only as good as the administrator who owns the disk (ADR-0006 keeps the real
+// anchors in Azure immutable blob storage; that sink is still to be written).
+HostingGuard.RequireExplicitFallback(
+    allowDevelopmentFallbacks,
+    "a filesystem audit export sink, which cannot enforce write-once and so anchors nothing",
+    "Mina:Audit:ExportContainerUri (Azure immutable blob storage)");
 builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSink(
     builder.Configuration["Mina:Audit:ExportPath"]
     ?? Path.Combine(AppContext.BaseDirectory, "audit-exports"),
@@ -122,6 +154,9 @@ builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSi
 builder.Services.AddHostedService<AuditExportBackgroundService>();
 
 var app = builder.Build();
+
+// Before authentication: the scheme and client address every later decision uses come from here.
+app.UseForwardedHeaders();
 
 if (usingInMemoryStore)
 {

@@ -9,6 +9,7 @@
 // authorisation rules live in the application services, so they are enforced identically whichever
 // front door a request arrives through.
 
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Application.Sessions;
@@ -19,10 +20,20 @@ using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Hosting;
 using Mina.ControlPlane.Persistence;
 using Mina.ManagementUi.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// On premises (ADR-0006) this sits behind the DMZ reverse proxy, which terminates TLS and manages
+// nothing else. Both of these were previously supplied by App Service.
+builder.Services.Configure<ForwardedHeadersOptions>(
+    options => HostingGuard.ConfigureForwardedHeaders(options, builder.Configuration));
+builder.Services.AddMinaDataProtection(builder.Configuration, builder.Environment);
+
+var allowDevelopmentFallbacks = HostingGuard.DevelopmentFallbacksAllowed(
+    builder.Configuration, builder.Environment);
 
 var approverRole = builder.Configuration["Mina:SensitiveSession:ApproverRole"] ?? "Mina.Approver";
 var adminRole = builder.Configuration["Mina:Ui:AdminRole"] ?? "Mina.Admin";
@@ -39,11 +50,18 @@ builder.Services.AddSingleton(sp =>
     return new RegionPolicy(regions.Approved, regions.Active);
 });
 
-// Same store as the API: Azure SQL when configured, otherwise in-memory for local review.
+// The same store the API uses: on-premises SQL Server when configured (ADR-0006), otherwise
+// in-memory for local review — and only when that stand-in has been explicitly permitted. An
+// approvals screen backed by a store that empties on restart is worse than one that will not start.
 var connectionString = builder.Configuration.GetConnectionString("MinaDb");
 var usingInMemoryStore = string.IsNullOrWhiteSpace(connectionString);
 if (usingInMemoryStore)
 {
+    HostingGuard.RequireExplicitFallback(
+        allowDevelopmentFallbacks,
+        "in-memory approval and audit stores that lose every decision on restart",
+        "ConnectionStrings:MinaDb");
+
     builder.Services.AddSingleton<InMemorySessionRepository>();
     builder.Services.AddSingleton<ISessionRepository>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISessionQueries>(sp => sp.GetRequiredService<InMemorySessionRepository>());
@@ -83,6 +101,7 @@ if (devSignIn.Enabled)
     UiStartupLog.UsingDevelopmentSignIn(app.Logger, devSignIn.UserPrincipalName);
 }
 
+app.UseForwardedHeaders();
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();

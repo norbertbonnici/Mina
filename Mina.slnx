@@ -4,6 +4,7 @@
     <Project Path="control-plane/src/Mina.ControlPlane.Api/Mina.ControlPlane.Api.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Application/Mina.ControlPlane.Application.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Domain/Mina.ControlPlane.Domain.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Hosting/Mina.ControlPlane.Hosting.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Persistence/Mina.ControlPlane.Persistence.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Pki/Mina.ControlPlane.Pki.csproj" />
   </Folder>

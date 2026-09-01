@@ -379,6 +379,9 @@
       "mina.controlplane.domain": {
         "type": "Project"
       },
+      "mina.controlplane.hosting": {
+        "type": "Project"
+      },
       "mina.controlplane.persistence": {
         "type": "Project",
         "dependencies": {

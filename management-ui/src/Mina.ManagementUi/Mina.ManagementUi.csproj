@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Application\Mina.ControlPlane.Application.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Hosting\Mina.ControlPlane.Hosting.csproj" />
     <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Persistence\Mina.ControlPlane.Persistence.csproj" />
     <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Domain\Mina.ControlPlane.Domain.csproj" />
   </ItemGroup>

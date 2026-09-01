@@ -826,6 +826,7 @@
           "Microsoft.Identity.Web": "[4.14.2, )",
           "Mina.ControlPlane.Application": "[1.0.0, )",
           "Mina.ControlPlane.Domain": "[1.0.0, )",
+          "Mina.ControlPlane.Hosting": "[1.0.0, )",
           "Mina.ControlPlane.Persistence": "[1.0.0, )",
           "Mina.ControlPlane.Pki": "[1.0.0, )",
           "Mina.Observability": "[1.0.0, )"
@@ -841,6 +842,9 @@
         }
       },
       "mina.controlplane.domain": {
+        "type": "Project"
+      },
+      "mina.controlplane.hosting": {
         "type": "Project"
       },
       "mina.controlplane.persistence": {
