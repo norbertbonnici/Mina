@@ -26,6 +26,10 @@ write_files:
       ExecStart=/usr/local/bin/envoy -c /etc/mina/envoy/envoy-bootstrap.yaml --log-level info
       Restart=always
       RestartSec=2
+      # /run/mina, owned by the service user, for the admin Unix socket. The admin interface is
+      # deliberately not on TCP: see the note in envoy-bootstrap.yaml.
+      RuntimeDirectory=mina
+      RuntimeDirectoryMode=0750
       # Least privilege: no new privileges, read-only system, private tmp.
       DynamicUser=yes
       SupplementaryGroups=mina-tls

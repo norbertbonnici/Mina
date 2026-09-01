@@ -17,11 +17,14 @@ namespace Mina.ControlPlane.Api.Infrastructure;
 public sealed partial class FileSystemAuditExportSink : IAuditExportSink
 {
     private readonly string _root;
+    private readonly string _environment;
 
-    public FileSystemAuditExportSink(string root)
+    public FileSystemAuditExportSink(string root, string environment)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(root);
+        ArgumentException.ThrowIfNullOrWhiteSpace(environment);
         _root = root;
+        _environment = environment;
         Directory.CreateDirectory(_root);
     }
 
@@ -42,15 +45,35 @@ public sealed partial class FileSystemAuditExportSink : IAuditExportSink
         await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<ReadOnlyMemory<byte>?> ReadAsync(string name, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        // Names come from audit events, which are written by this service — but they are read back
+        // out of the database, so treat them as untrusted input and keep the read inside the root.
+        var path = Path.GetFullPath(Path.Combine(_root, name.Replace('/', Path.DirectorySeparatorChar)));
+        if (!path.StartsWith(Path.GetFullPath(_root) + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || !File.Exists(path))
+        {
+            return null;
+        }
+
+        return await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+    }
+
     public Task<long?> GetLastExportedSequenceAsync(CancellationToken cancellationToken)
     {
-        if (!Directory.Exists(_root))
+        // Only this environment's exports. Sharing a root across environments and taking the
+        // highest sequence anywhere under it would let a dev export set the high-water mark for
+        // prod, and prod would then skip every event below it — a silent hole in the anchors.
+        var scope = Path.Combine(_root, _environment);
+        if (!Directory.Exists(scope))
         {
             return Task.FromResult<long?>(null);
         }
 
         long? highest = null;
-        foreach (var file in Directory.EnumerateFiles(_root, "audit-*.jsonl", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(scope, "audit-*.jsonl", SearchOption.AllDirectories))
         {
             var match = ExportNamePattern().Match(Path.GetFileName(file));
             if (match.Success

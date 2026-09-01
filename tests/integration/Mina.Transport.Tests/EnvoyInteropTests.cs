@@ -57,6 +57,52 @@ public sealed class EnvoyInteropTests
         Assert.Contains(authority, logged, StringComparison.Ordinal);
     }
 
+    [SkippableTheory]
+    [InlineData("169.254.169.254", 80)]   // Azure IMDS: managed-identity tokens for this node's Key Vault
+    [InlineData("10.1.2.3", 443)]         // corporate/private space (SR-004)
+    [InlineData("192.168.1.1", 443)]
+    [InlineData("172.20.0.5", 443)]
+    [InlineData("localhost", 9901)]       // the node's own services by name
+    public async Task Envoy_refuses_to_connect_to_private_and_link_local_destinations(string host, int port)
+    {
+        var envoyPath = EnvoyProcess.LocateBinary();
+        Skip.If(envoyPath is null, "Set MINA_ENVOY to an Envoy binary to run the interop test.");
+
+        using var ca = CertificateAuthority.Create("Mina Interop CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
+        using var caPublic = ca.PublicCertificate;
+        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName);
+
+        using var sessionCert = ca.IssueClientCertificate(
+            "mina-session-interop", "mina:session:interop", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
+        var clientPfx = sessionCert.Export(X509ContentType.Pkcs12);
+
+        var factory = new MtlsTunnelConnectionFactory(
+            new EgressEndpoint("127.0.0.1", envoy.IngressPort, ServerName),
+            () => X509CertificateLoader.LoadPkcs12(clientPfx, password: null),
+            caPublic);
+
+        await using var proxy = new LoopbackConnectProxy(
+            factory, new LoopbackPeerAuthorizer(), NullLogger<LoopbackConnectProxy>.Instance);
+        proxy.Start();
+
+        // A valid, live session certificate is not authority to reach anywhere the node can reach.
+        // Egress is for the public internet; the node's own loopback services and the IMDS endpoint
+        // that issues its Key Vault tokens are not part of that.
+        using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        await socket.ConnectAsync(proxy.Endpoint!);
+        await using var stream = new NetworkStream(socket, ownsSocket: false);
+        await stream.WriteAsync(HttpConnect.BuildConnectRequest(new ConnectTarget(host, port)));
+
+        // Envoy answers 403; the agent has no direct fallback, so the browser gets a 502 and the
+        // connection simply does not happen.
+        var status = await HttpConnect.ReadResponseStatusAsync(stream, CancellationToken.None);
+        Assert.Equal(502, status);
+
+        // The refusal is recorded at the node, so an attempt on IMDS is visible rather than silent.
+        var logged = await WaitForLogLineAsync(envoy.AccessLogPath, $"{host}:{port}");
+        Assert.Contains("\"response_code\":403", logged, StringComparison.Ordinal);
+    }
+
     private static async Task<string> WaitForLogLineAsync(string path, string mustContain)
     {
         for (var attempt = 0; attempt < 50; attempt++)

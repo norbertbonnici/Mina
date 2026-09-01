@@ -18,6 +18,13 @@ namespace Mina.ControlPlane.Domain.SensitiveSessions;
 /// </remarks>
 public sealed class SensitiveSessionRequest
 {
+    /// <summary>
+    /// Longest justification reference accepted. Matches the storage column, and is enforced here so
+    /// an over-long value is refused as bad input rather than failing at the database — where, since
+    /// audit precedes the action, it would leave an audit event for a request that never existed.
+    /// </summary>
+    public const int MaxJustificationReferenceLength = 128;
+
     private SensitiveSessionRequest(
         Guid id,
         Guid sessionId,
@@ -93,11 +100,13 @@ public sealed class SensitiveSessionRequest
                 SensitiveSessionRule.ActorRequired, "A requester identity is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(justificationReference))
+        if (string.IsNullOrWhiteSpace(justificationReference)
+            || justificationReference.Length > MaxJustificationReferenceLength)
         {
             throw new SensitiveSessionRuleViolationException(
                 SensitiveSessionRule.JustificationRequired,
-                "A justification reference is required to request a sensitive session.");
+                "A justification reference is required, of at most "
+                + $"{MaxJustificationReferenceLength} characters.");
         }
 
         if (!policy.IsWithinLimit(requestedDuration))

@@ -18,7 +18,8 @@ public sealed record TelemetryItemDto(
 
 public sealed record TelemetryBatchDto(string Region, IReadOnlyList<TelemetryItemDto> Items);
 
-public sealed record TelemetryAcceptedDto(int Recorded, int Aggregated, int Unattributable, int SuppressionMismatches);
+public sealed record TelemetryAcceptedDto(
+    int Recorded, int Aggregated, int Unattributable, int SuppressionMismatches, int Rejected);
 
 /// <summary>
 /// The egress nodes' interface to the control plane: which sessions to serve, and where their
@@ -80,6 +81,7 @@ public static class NodeEndpoints
             metrics.TelemetryIngested(dto.Region, "recorded", result.Recorded);
             metrics.TelemetryIngested(dto.Region, "aggregated", result.Aggregated);
             metrics.TelemetryIngested(dto.Region, "unattributable", result.Unattributable);
+            metrics.TelemetryIngested(dto.Region, "rejected", result.Rejected);
             if (result.SuppressionMismatches > 0)
             {
                 metrics.SuppressionMismatch(dto.Region, result.SuppressionMismatches);
@@ -89,7 +91,8 @@ public static class NodeEndpoints
             // withheld — a node with a stale allowlist can then correct itself. The control plane
             // has already discarded them either way.
             return Results.Ok(new TelemetryAcceptedDto(
-                result.Recorded, result.Aggregated, result.Unattributable, result.SuppressionMismatches));
+                result.Recorded, result.Aggregated, result.Unattributable, result.SuppressionMismatches,
+                result.Rejected));
         });
 
         return app;

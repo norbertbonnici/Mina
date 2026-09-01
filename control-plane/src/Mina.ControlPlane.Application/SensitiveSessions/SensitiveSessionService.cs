@@ -195,40 +195,49 @@ public sealed class SensitiveSessionService(
     /// (D-06). Runs on a timer so an approval cannot outlive its TTL even if nothing else happens;
     /// returns how many were expired.
     /// </summary>
-    public async Task<int> ExpireDueAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Ids of approvals whose window has elapsed. Split from <see cref="ExpireAsync"/> so the caller
+    /// can expire each one in its own unit of work: a single unit of work cannot isolate failures,
+    /// because a rejected commit leaves the failed change tracked and every later commit in that
+    /// sweep re-attempts and re-fails it.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> ListDueForExpiryAsync(CancellationToken cancellationToken)
+    {
+        var due = await _requests.ListExpiredAsync(_clock.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        return [.. due.Select(r => r.Id)];
+    }
+
+    /// <summary>
+    /// Expires one approval and, per D-06, terminates the session it was granted for. Returns false
+    /// when the request has already been decided by something else in the meantime — a race with an
+    /// analyst ending it early is an ordinary outcome, not a failure.
+    /// </summary>
+    public async Task<bool> ExpireAsync(Guid requestId, CancellationToken cancellationToken)
     {
         var now = _clock.GetUtcNow();
-        var due = await _requests.ListExpiredAsync(now, cancellationToken).ConfigureAwait(false);
-
-        var expired = 0;
-        foreach (var request in due)
+        var request = await _requests.FindAsync(requestId, cancellationToken).ConfigureAwait(false);
+        if (request is null || !request.TryExpire(now))
         {
-            if (!request.TryExpire(now))
-            {
-                continue;
-            }
-
-            // D-06: expiry terminates the session rather than silently resuming URL logging on a
-            // continuation of the same activity. Whether it will be terminated is decided before the
-            // event is written, so the event is accurate and still precedes the change it describes.
-            var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
-            var terminating = session is not null && session.State == SessionState.Active;
-
-            await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
-
-            if (terminating)
-            {
-                session!.Revoke(now, "sensitive-session-expiry");
-            }
-
-            // One commit, so an approval can never be recorded as expired while the session it was
-            // granted for is still live and still suppressed (D-06).
-            await _unitOfWork.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-            expired++;
+            return false;
         }
 
-        return expired;
+        // D-06: expiry terminates the session rather than silently resuming URL logging on a
+        // continuation of the same activity. Whether it will be terminated is decided before the
+        // event is written, so the event is accurate and still precedes the change it describes.
+        var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+        var terminating = session is not null && session.State == SessionState.Active;
+
+        await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
+
+        if (terminating)
+        {
+            session!.Revoke(now, "sensitive-session-expiry");
+        }
+
+        // One commit, so an approval can never be recorded as expired while the session it was
+        // granted for is still live and still suppressed (D-06).
+        await _unitOfWork.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private async Task<SensitiveSessionRequest> RequireRequestAsync(Guid requestId, CancellationToken cancellationToken)

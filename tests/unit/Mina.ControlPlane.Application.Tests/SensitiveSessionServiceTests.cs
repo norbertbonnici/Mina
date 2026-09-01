@@ -183,7 +183,7 @@ public class SensitiveSessionServiceTests
         await h.Service.ActivateAsync(h.Analyst, request.RequestId, default);
 
         h.Clock.Advance(TimeSpan.FromHours(1));
-        var expired = await h.Service.ExpireDueAsync(default);
+        var expired = await h.ExpireDueAsync();
 
         Assert.Equal(1, expired);
         var view = await h.Service.GetAsync(h.Analyst, request.RequestId, default);
@@ -201,7 +201,7 @@ public class SensitiveSessionServiceTests
         await h.Service.ApproveAsync(h.Approver, request.RequestId, TimeSpan.FromMinutes(30), default);
 
         h.Clock.Advance(TimeSpan.FromMinutes(30));
-        Assert.Equal(1, await h.Service.ExpireDueAsync(default));
+        Assert.Equal(1, await h.ExpireDueAsync());
 
         var view = await h.Service.GetAsync(h.Analyst, request.RequestId, default);
         Assert.Equal(SensitiveSessionState.Ended, view.State);
@@ -216,7 +216,7 @@ public class SensitiveSessionServiceTests
 
         h.Clock.Advance(TimeSpan.FromMinutes(59));
 
-        Assert.Equal(0, await h.Service.ExpireDueAsync(default));
+        Assert.Equal(0, await h.ExpireDueAsync());
         Assert.Equal(SessionState.Active, h.Session.State);
     }
 
@@ -281,6 +281,21 @@ public class SensitiveSessionServiceTests
 
         public Task<SensitiveSessionView> RequestAsync(string reference = "CASE-2026-0042") =>
             Service.RequestAsync(Analyst, SessionId, reference, TimeSpan.FromHours(2), default);
+
+        /// <summary>What one pass of the expiry sweeper does, minus the per-request scoping.</summary>
+        public async Task<int> ExpireDueAsync()
+        {
+            var expired = 0;
+            foreach (var id in await Service.ListDueForExpiryAsync(default))
+            {
+                if (await Service.ExpireAsync(id, default))
+                {
+                    expired++;
+                }
+            }
+
+            return expired;
+        }
     }
 
     private sealed class FakeClock(DateTimeOffset now) : TimeProvider

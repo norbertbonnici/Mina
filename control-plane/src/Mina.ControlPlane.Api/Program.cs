@@ -112,10 +112,12 @@ builder.Services.AddScoped<NodeDirectoryService>();
 builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.Section));
 builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddScoped<AuditChainVerifier>();
+builder.Services.AddScoped<AuditAnchorVerifier>();
 builder.Services.AddScoped<AuditExportService>();
 builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSink(
     builder.Configuration["Mina:Audit:ExportPath"]
-    ?? Path.Combine(AppContext.BaseDirectory, "audit-exports")));
+    ?? Path.Combine(AppContext.BaseDirectory, "audit-exports"),
+    builder.Configuration[$"{AuditOptions.Section}:Environment"] ?? "dev"));
 builder.Services.AddHostedService<AuditExportBackgroundService>();
 
 var app = builder.Build();

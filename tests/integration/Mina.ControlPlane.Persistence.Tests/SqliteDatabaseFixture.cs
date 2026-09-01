@@ -36,10 +36,16 @@ public sealed class SqliteDatabaseFixture : IDisposable
 }
 
 /// <summary>Holds one issuing CA for a test class, so tests do not pay to mint a key each time.</summary>
+/// <remarks>
+/// The window is deliberately wide. Tests drive the service from fixed clocks, and a CA anchored a
+/// day either side of "now" silently stops covering those instants as the calendar moves — issuing
+/// a leaf that starts before its issuer does throws, and the suite starts failing on a date rather
+/// than on a change.
+/// </remarks>
 public sealed class TestCertificateAuthorityFixture : IDisposable
 {
     public CertificateAuthority Authority { get; } =
-        CertificateAuthority.Create("Mina Test CA", DateTimeOffset.UtcNow.AddDays(-1), TimeSpan.FromDays(30));
+        CertificateAuthority.Create("Mina Test CA", DateTimeOffset.UtcNow.AddYears(-2), TimeSpan.FromDays(365 * 5));
 
     public void Dispose() => Authority.Dispose();
 }

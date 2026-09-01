@@ -71,11 +71,17 @@ Governance events live in the `audit` schema, separate from both the operational
 telemetry ones. The application only ever inserts and selects there; production grants it exactly
 that and no more, so rewriting history has to go around the application rather than through it.
 
-Each event carries the hash of the one before it. That does not prevent tampering — a writer with
-enough privilege could rewrite the whole chain — but combined with the periodic export, which
-copies a range and its content hash to write-once storage and records that anchor back into the
-chain, silent alteration becomes detectable: a rewritten chain no longer matches its anchors.
-`GET /api/audit/verify` walks the chain and reports the first event that does not add up.
+Each event carries the hash of the one before it. On its own that only proves internal
+consistency: a writer with enough privilege can rewrite every event and recompute every link, and
+the chain then verifies perfectly. What they cannot rewrite is an export already written to
+write-once storage, so the periodic export — a range, its content hash, and an anchor event
+recording both back into the chain — is what makes alteration detectable.
+
+`GET /api/audit/verify` performs both checks and reports them separately. The chain walk finds the
+first event that does not add up. The anchor check re-renders each anchored range from the current
+chain and compares it against the bytes actually in storage; a mismatch means the chain was
+rewritten since it was anchored. They are kept apart in the response because an intact chain with
+diverging anchors is the interesting case, and folding the two together would hide it.
 
 Events are written **before** the action they describe, and a failure to write throws, so a
 governance action cannot proceed unlogged. The deliberate consequence is that a failure between the

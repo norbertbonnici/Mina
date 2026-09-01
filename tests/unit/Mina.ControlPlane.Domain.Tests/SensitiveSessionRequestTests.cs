@@ -54,6 +54,29 @@ public class SensitiveSessionRequestTests
         Assert.Equal(SensitiveSessionRule.JustificationRequired, ex.Rule);
     }
 
+    [Fact]
+    public void Create_rejects_a_justification_reference_longer_than_the_column()
+    {
+        // A reference is a case number, not prose. Refusing it here rather than at the database
+        // matters because the audit event is written before the action: a value that only fails on
+        // insert leaves an approval request recorded that never existed.
+        var ex = Assert.Throws<SensitiveSessionRuleViolationException>(() =>
+            SensitiveSessionRequest.Create(
+                Guid.NewGuid(), SessionId, AnalystOid, AnalystUpn,
+                new string('x', SensitiveSessionRequest.MaxJustificationReferenceLength + 1),
+                TimeSpan.FromHours(1), Policy, T0));
+
+        Assert.Equal(SensitiveSessionRule.JustificationRequired, ex.Rule);
+
+        // The boundary itself is accepted.
+        var atLimit = SensitiveSessionRequest.Create(
+            Guid.NewGuid(), SessionId, AnalystOid, AnalystUpn,
+            new string('x', SensitiveSessionRequest.MaxJustificationReferenceLength),
+            TimeSpan.FromHours(1), Policy, T0);
+        Assert.Equal(
+            SensitiveSessionRequest.MaxJustificationReferenceLength, atLimit.JustificationReference.Length);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-30)]

@@ -25,15 +25,25 @@ against the code; the remainder are listed below as unverified.
 | 8 | high | The sidecar tailed `/var/log/mina/envoy-access.log` while Envoy logged to stdout, so as deployed **no hostname telemetry would ever ship**. | Envoy now writes the access log to that file. The config-validation script, the interop test and the demo were all updated to follow it. |
 | 9 | high | A control-plane HTTP timeout permanently stopped the agent's protected-path worker: the timeout arrives as `TaskCanceledException`, escaped the catch filter and broke the loop. It failed closed but never recovered without a restart. | The worker and the renewal path now treat a cancellation that is *not* the shutdown token as a transient failure: the path closes and the next tick retries; a renewal timeout drops the session, as a refusal does. |
 | 10 | high | Suppression expiry was two transactions — the approval ended and committed, then the session revoke committed separately — so a failure in between left an expired approval with a live session still suppressed, past the window an approver granted (D-06). | An explicit `IUnitOfWork` commits the approval change and the session change together; activation, which likewise touches both, uses it too. |
+## Fixed in the third pass (the "before production" set)
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 11 | high | The expiry sweeper's catch filter named two exception types the path does not throw, so the one it does — a concurrency conflict on a row the agent is renewing — escaped. `BackgroundServiceExceptionBehavior` defaults to `StopHost`, so an ordinary conflict took session issuance down with it, and the deterministic ordering of due rows made it a crash loop. | The loop now catches anything that is not shutdown. The sweep was also restructured to expire each approval in **its own scope and unit of work**: a per-request `try`/`catch` over a shared context isolates nothing, because a rejected `SaveChanges` leaves the failed change tracked and every later commit in the sweep re-attempts it. Three tests, one of which fails against the old shared-scope design. |
+| 12 | medium | WORM anchoring was claimed in three places but never computed or compared. `IAuditExportSink` had no read method, so nothing *could* compare an export to the chain: a writer who rewrote the rows and recomputed the hashes forward got `intact` from `/api/audit/verify`. `ExportAsync` also treated a store behind its own anchors as "nothing new". | `AuditAnchorVerifier` re-renders each anchored range from the current chain and compares it against the bytes in storage, and against the hash the chain records for them. Reported by `/verify` as separate fields, never folded into `Intact`. Export now raises `AuditAnchorException` when the store ends below the anchors. The render format is shared between writing and verifying so a formatting change cannot masquerade as tampering. A test performs the wholesale rewrite: the chain check passes, the anchor check catches it. |
+| 13 | medium | Envoy's admin interface bound `127.0.0.1:9901` and the forward proxy had no destination policy, so a live session certificate could `CONNECT 127.0.0.1:9901` for `/config_dump`, `/certs` or `/quitquitquit` — and reach IMDS at `169.254.169.254` for managed-identity tokens to this node's Key Vault. | Admin moved to a Unix socket (`RuntimeDirectory=mina`, mode 0600), which is not addressable through CONNECT at all. An RBAC filter additionally denies loopback, link-local, RFC 1918, CGNAT and IPv6-literal authorities, and logs the refusal. Five interop cases against a real Envoy confirm the denial; the residual (a public name resolving into private space) needs a host firewall — backlog M4-10. |
+| 14 | medium | Nothing bounded hostname length at telemetry ingest against an `nvarchar(253)` column, and the batch is one unit of work the sidecar discards on failure — so a local process could blind a node's telemetry with no approval and no audit trail. | Ingest rejects over-length hostnames per item and counts them (`Rejected`, surfaced in the node response and as a metric dimension), leaving the rest of the batch to record. |
+| 15 | low | `JustificationReference` was unbounded against an `nvarchar(128)` column, giving a 500 where every other malformed input gives a 400 — and, since audit precedes the action, an event for a request that never existed. | Bounded in the aggregate, with the EF configuration pointing at the same constant. |
+| 16 | low | Retention was documented as implemented configuration; no retention code exists. | `LOGGING_AND_PRIVACY.md` §7 now states plainly that the values are decided and not enforced, and that C1/C2 audit deletion needs its own ADR and DPO sign-off because removing events from an anchored, append-only chain is indistinguishable from tampering. Backlog M4-9 owns enforcement. |
+
+Also corrected in this pass: the test CA fixture was anchored one day before "now", so tests driving
+fixed clocks began failing purely because the calendar advanced. Widened.
+
 ## Confirmed but not yet fixed
 
 - **medium — device compliance is inferred from the presence of a `deviceid` claim**, which
   indicates Entra registration, not Intune compliance, while ARCHITECTURE §4 says the control plane
   validates compliance. Either check a real compliance signal or correct the document.
-- **medium — retention is documented as implemented configuration** (LOGGING_AND_PRIVACY §7) but no
-  retention code exists anywhere.
-- **medium — WORM anchors are written but never compared back to the chain**, so the divergence
-  detection the tamper-evidence design rests on is not implemented.
 - **medium — `EfAuditEventStore` maps every `DbUpdateException` to a sequence conflict**, so a
   genuine database error becomes a silent retry.
 - **low — session ownership returns 403 for another user's session and 404 for a missing one**,
@@ -97,8 +107,10 @@ suppression to engage without a distinct approver, and no governance action that
 - **403/404 existence oracle** on session endpoints, contradicting the service's own comment. Ids are
   unguessable and probing is audited; a one-line consistency fix.
 - **Expiry of a never-activated approval revokes the analyst's live, never-suppressed session.**
-  Errs fail-closed, but teaches analysts to avoid the approved workflow. Gate the revoke on
-  `request.ActivatedAt is not null`.
+  Errs fail-closed, but teaches analysts to avoid the approved workflow. Gating the revoke on
+  `request.ActivatedAt is not null` would fix it — deliberately *not* done here, because D-06 was
+  decided by the project owner as "expiry terminates the session" and narrowing it is a change to
+  that decision, not a bug fix. Raise it as a D-06 amendment or leave it as is.
 - **Undecided requests never lapse and the approver queue has no limit** — the only unbounded query
   in the codebase.
 - **`MaxDuration` is unvalidated** and `RequestedDuration` is a SQL `time` column, so a configured

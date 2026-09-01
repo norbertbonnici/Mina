@@ -35,6 +35,25 @@ public class TelemetryIngestServiceTests
     }
 
     [Fact]
+    public async Task An_over_long_hostname_is_rejected_without_discarding_the_rest_of_the_batch()
+    {
+        var h = new Harness();
+
+        var result = await h.Service.IngestAsync(Batch(
+            Item(h.SessionId, new string('a', HostnameObservation.MaxHostnameLength + 1)),
+            Item(h.SessionId, "example.org")), default);
+
+        // A batch is one unit of work and the node discards what it cannot ship, so letting one
+        // malformed authority throw would erase every legitimate observation alongside it —
+        // telemetry blinded for the session without anyone approving suppression.
+        Assert.Equal(1, result.Rejected);
+        Assert.Equal(1, result.Recorded);
+
+        var stored = await h.Telemetry.ListForSessionAsync(h.SessionId, default);
+        Assert.Equal(["example.org"], stored.Select(o => o.Hostname));
+    }
+
+    [Fact]
     public async Task A_suppressed_session_never_gets_a_hostname_stored()
     {
         var h = new Harness();

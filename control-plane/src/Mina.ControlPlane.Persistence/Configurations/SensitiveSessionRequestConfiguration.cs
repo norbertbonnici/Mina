@@ -20,7 +20,8 @@ internal sealed class SensitiveSessionRequestConfiguration : IEntityTypeConfigur
         builder.Property(r => r.SessionId).IsRequired();
         builder.Property(r => r.RequesterObjectId).IsRequired().HasMaxLength(64);
         builder.Property(r => r.RequesterUpn).IsRequired().HasMaxLength(256);
-        builder.Property(r => r.JustificationReference).IsRequired().HasMaxLength(128);
+        builder.Property(r => r.JustificationReference).IsRequired()
+            .HasMaxLength(SensitiveSessionRequest.MaxJustificationReferenceLength);
         builder.Property(r => r.ApproverObjectId).HasMaxLength(64);
         builder.Property(r => r.ApproverUpn).HasMaxLength(256);
 

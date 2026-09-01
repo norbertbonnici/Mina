@@ -7,6 +7,9 @@ namespace Mina.ControlPlane.Domain.Telemetry;
 /// </summary>
 public sealed class HostnameObservation
 {
+    /// <summary>Longest DNS name, and the storage column's width.</summary>
+    public const int MaxHostnameLength = 253;
+
     private HostnameObservation(
         Guid id,
         Guid sessionId,
@@ -64,6 +67,11 @@ public sealed class HostnameObservation
 
         ArgumentException.ThrowIfNullOrWhiteSpace(region);
         ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
+        if (hostname.Length > MaxHostnameLength)
+        {
+            throw new ArgumentException(
+                $"A hostname cannot exceed {MaxHostnameLength} characters.", nameof(hostname));
+        }
 
         return new HostnameObservation(
             Guid.NewGuid(), sessionId, region, occurredAt, hostname, port,

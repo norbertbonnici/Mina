@@ -71,8 +71,8 @@ metric (leak canary). AC-014 verifies with content scans.
 
 ## 7. Retention
 
-Operating values set by the owner (D-09, 2026-08-31), implemented as configuration per data
-class and forming the formal proposal for ratification:
+Operating values set by the owner (D-09, 2026-08-31), forming the formal proposal for
+ratification:
 
 | Class | Retention |
 |---|---|
@@ -80,6 +80,17 @@ class and forming the formal proposal for ratification:
 | C1/C2 governance audit + session metadata | **5 years** |
 | C5 operational telemetry | **90 days** |
 | C6 justification references | with C1 (5 years) |
+
+**These values are decided, not enforced.** Nothing in the platform deletes anything today: there
+is no retention job, no TTL on the telemetry tables, and no lifecycle policy on the audit export
+container. Every class above accumulates indefinitely until M4-9 implements enforcement. Recorded
+plainly because an unenforced retention period reads as a control in an assessment and is not one.
+
+Enforcement is not symmetrical across the classes. C3 hostname telemetry and C5 operational
+telemetry are ordinary deletions. C1/C2 governance audit is not: the trail is append-only and
+hash-chained, and its exports are anchors in write-once storage, so deleting from it has to be
+designed rather than scheduled — an unanchored gap is indistinguishable from tampering. That
+design needs its own ADR and DPO sign-off before any code is written for it.
 
 Per REQUIREMENTS §5 these require legal/data-protection ratification before production; that
 sign-off remains a production-gate item. No permanent exemptions.

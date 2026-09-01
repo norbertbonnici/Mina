@@ -1,7 +1,5 @@
 using System.Globalization;
 using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Domain.Audit;
 
@@ -18,6 +16,32 @@ public interface IAuditExportSink
 
     /// <summary>The highest sequence already exported, so the next export continues from there.</summary>
     Task<long?> GetLastExportedSequenceAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads back a previously written export, or null if there is no such name. This is what turns
+    /// an export into a usable anchor: without reading it, nothing ever compares the chain against
+    /// the copy in write-once storage.
+    /// </summary>
+    Task<ReadOnlyMemory<byte>?> ReadAsync(string name, CancellationToken cancellationToken);
+}
+
+/// <summary>Raised when the audit trail and its anchors disagree in a way that needs a human.</summary>
+public sealed class AuditAnchorException : Exception
+{
+    public AuditAnchorException()
+        : base("The audit trail and its anchors disagree.")
+    {
+    }
+
+    public AuditAnchorException(string message)
+        : base(message)
+    {
+    }
+
+    public AuditAnchorException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
 }
 
 /// <summary>Outcome of an export attempt.</summary>
@@ -38,6 +62,10 @@ public sealed record AuditExportResult(long FromSequence, long ToSequence, int E
 /// storage — so a rewritten chain no longer matches the anchors, and the divergence is evidence.
 /// The `audit_export_completed` event carries the range and the content hash, so the anchors are
 /// themselves part of the trail.
+///
+/// Writing anchors is only half of it: something has to read them back and compare. That is
+/// <see cref="AuditAnchorVerifier"/>, reported by <c>GET /api/audit/verify</c> alongside — never
+/// folded into — the chain result.
 /// </remarks>
 public sealed class AuditExportService(
     IAuditEventStore store,
@@ -47,8 +75,6 @@ public sealed class AuditExportService(
     TimeProvider clock)
 {
     private const int MaxEventsPerExport = 5000;
-
-    private static readonly JsonSerializerOptions ExportSerializerOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IAuditEventStore _store = store ?? throw new ArgumentNullException(nameof(store));
     private readonly IAuditExportSink _sink = sink ?? throw new ArgumentNullException(nameof(sink));
@@ -61,13 +87,26 @@ public sealed class AuditExportService(
         var lastExported = await _sink.GetLastExportedSequenceAsync(cancellationToken).ConfigureAwait(false);
         var from = (lastExported ?? -1) + 1;
 
+        // If the store has fewer events than the anchors already cover, events that were exported
+        // are no longer in the database. Reading from `from` would simply come back empty and the
+        // export would report "nothing to do" — the quietest possible response to evidence that the
+        // audit trail has been truncated. Raise instead: the background service logs it, and
+        // /api/audit/verify reports the same divergence in detail.
+        var tip = await _store.GetTipAsync(cancellationToken).ConfigureAwait(false);
+        if (tip.Sequence < from - 1)
+        {
+            throw new AuditAnchorException(
+                $"The audit store ends at sequence {tip.Sequence} but exports already cover up to "
+                + $"{from - 1}. Events that were anchored are missing from the store.");
+        }
+
         var events = await _store.ReadAsync(from, MaxEventsPerExport, cancellationToken).ConfigureAwait(false);
         if (events.Count == 0)
         {
             return AuditExportResult.Nothing;
         }
 
-        var content = Render(events);
+        var content = AuditExportFormat.Render(events);
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
         var to = events[^1].Sequence;
         var name = string.Create(
@@ -89,34 +128,4 @@ public sealed class AuditExportService(
         return new AuditExportResult(from, to, events.Count, hash);
     }
 
-    /// <summary>One JSON object per line, in chain order — the format the anchor is hashed over.</summary>
-    private static byte[] Render(IReadOnlyList<AuditEvent> events)
-    {
-        var builder = new StringBuilder();
-        foreach (var auditEvent in events)
-        {
-            builder.AppendLine(JsonSerializer.Serialize(new
-            {
-                schema = "mina.audit.v1",
-                event_id = auditEvent.Id,
-                sequence = auditEvent.Sequence,
-                event_type = auditEvent.EventType,
-                severity = auditEvent.Severity.ToString().ToLowerInvariant(),
-                component = auditEvent.Component.ToString(),
-                occurred_at = auditEvent.OccurredAt.ToUniversalTime(),
-                environment = auditEvent.Environment,
-                region = auditEvent.Region,
-                user = auditEvent.UserObjectId is null
-                    ? null
-                    : new { oid = auditEvent.UserObjectId, upn = auditEvent.UserPrincipalName },
-                device = auditEvent.DeviceId is null ? null : new { entra_device_id = auditEvent.DeviceId },
-                session = auditEvent.SessionId is null ? null : new { id = auditEvent.SessionId },
-                data = auditEvent.Data,
-                previous_hash = auditEvent.PreviousHash,
-                hash = auditEvent.Hash,
-            }, ExportSerializerOptions));
-        }
-
-        return Encoding.UTF8.GetBytes(builder.ToString());
-    }
 }

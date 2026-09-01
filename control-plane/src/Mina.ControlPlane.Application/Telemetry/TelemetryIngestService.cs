@@ -32,6 +32,7 @@ public sealed class TelemetryIngestService(
         var unattributable = 0;
         var aggregated = 0;
         var mismatches = 0;
+        var rejected = 0;
 
         foreach (var group in batch.Items.GroupBy(item => item.SessionId))
         {
@@ -76,6 +77,16 @@ public sealed class TelemetryIngestService(
                     continue;
                 }
 
+                if (item.Hostname!.Length > HostnameObservation.MaxHostnameLength)
+                {
+                    // Drop the one bad item rather than letting it fail the batch insert. The whole
+                    // batch is one unit of work and the node discards a batch it cannot ship, so an
+                    // over-length CONNECT authority would otherwise erase every legitimate
+                    // observation for that interval — telemetry blinded without an approval.
+                    rejected++;
+                    continue;
+                }
+
                 recordable.Add(HostnameObservation.Record(
                     session.Id, batch.Region, item.OccurredAt, item.Hostname!, item.Port,
                     item.BytesUp, item.BytesDown, item.DurationMs));
@@ -87,7 +98,7 @@ public sealed class TelemetryIngestService(
             await _telemetry.AddHostnamesAsync(recordable, cancellationToken).ConfigureAwait(false);
         }
 
-        return new TelemetryIngestResult(recordable.Count, aggregated, unattributable, mismatches);
+        return new TelemetryIngestResult(recordable.Count, aggregated, unattributable, mismatches, rejected);
     }
 
     /// <summary>

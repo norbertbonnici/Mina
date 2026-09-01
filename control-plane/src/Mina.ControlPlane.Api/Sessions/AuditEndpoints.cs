@@ -14,7 +14,20 @@ public sealed record AuditEventDto(
     Guid? SessionId,
     string Data);
 
-public sealed record AuditVerificationDto(bool Intact, long Verified, long? BrokenAtSequence, string? Reason);
+/// <summary>
+/// The result of verifying the trail. <paramref name="Intact"/> covers the hash chain only —
+/// whether the stored events still add up among themselves. The anchor fields are reported
+/// separately and deliberately not folded into it: the chain can be perfectly self-consistent and
+/// still have been rewritten wholesale, and only the anchors in write-once storage show that.
+/// </summary>
+public sealed record AuditVerificationDto(
+    bool Intact,
+    long Verified,
+    long? BrokenAtSequence,
+    string? Reason,
+    int AnchorsChecked,
+    int AnchorsMatched,
+    IReadOnlyList<string> AnchorProblems);
 
 /// <summary>
 /// Read and verification access to the audit trail, for platform administrators.
@@ -38,13 +51,17 @@ public static class AuditEndpoints
             return Results.Ok(events.Select(ToDto));
         });
 
-        // Walks the chain and reports the first event that does not add up. An intact result is
-        // evidence the stored trail has not been altered since it was written.
-        group.MapGet("/verify", async (AuditChainVerifier verifier, CancellationToken ct) =>
+        // Two separate checks. The chain walk finds the first event that does not add up; the
+        // anchor check compares the chain against the exports in write-once storage, which is the
+        // only part that survives a writer privileged enough to recompute every hash.
+        group.MapGet("/verify", async (
+            AuditChainVerifier verifier, AuditAnchorVerifier anchors, CancellationToken ct) =>
         {
             var result = await verifier.VerifyAsync(ct);
+            var anchored = await anchors.VerifyAsync(ct);
             return Results.Ok(new AuditVerificationDto(
-                result.IsIntact, result.Verified, result.BrokenAtSequence, result.Reason));
+                result.IsIntact, result.Verified, result.BrokenAtSequence, result.Reason,
+                anchored.Checked, anchored.Matched, anchored.Problems));
         });
 
         return app;

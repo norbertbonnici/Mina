@@ -13,9 +13,14 @@
 # production; see cloud-init.yaml). scripts/validate-envoy-config.sh rewrites these paths to a
 # temp dir of throwaway certs so the config can be validated in CI without secrets.
 
+# The admin interface is a Unix socket, not a TCP port. On a forward proxy, "loopback only" is not
+# a boundary: the proxy itself reaches loopback, so a holder of a live session certificate could
+# CONNECT 127.0.0.1:9901 and reach an unauthenticated admin API that exposes certificates, config
+# and /quitquitquit. A pipe is not addressable through CONNECT at all. Mode 0600 keeps it to the
+# service user; the directory comes from RuntimeDirectory=mina in the unit.
 admin:
   address:
-    socket_address: { address: 127.0.0.1, port_value: 9901 }
+    pipe: { path: /run/mina/envoy-admin.sock, mode: 384 }  # 384 = 0600
 
 static_resources:
   listeners:
@@ -82,6 +87,43 @@ static_resources:
                   - upgrade_type: CONNECT
                     connect_config: {}
           http_filters:
+          # Destination policy. Without one, "authenticated forward proxy" means an authenticated
+          # analyst can ask the node to connect anywhere the node can reach — including the Azure
+          # IMDS endpoint at 169.254.169.254, which hands out managed-identity tokens for the Key
+          # Vault holding this node's TLS material, and including the node's own loopback services.
+          # Research egress is for the public internet, so private and link-local space is denied.
+          # Denials are logged like any other request, so an attempt to reach IMDS is visible in
+          # hostname telemetry rather than silent.
+          #
+          # This matches the CONNECT authority, so it stops literal addresses. It does NOT stop a
+          # public DNS name that resolves into private space (DNS rebinding); the durable control
+          # for that is a host firewall on the node, tracked in the backlog — see
+          # docs/SECURITY_REVIEW_2026-09-01.md.
+          - name: envoy.filters.http.rbac
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+              rules:
+                action: DENY
+                policies:
+                  private_destinations:
+                    principals:
+                    - any: true
+                    permissions:
+                    # Loopback, link-local (Azure IMDS), "this network", and carrier-grade NAT.
+                    - header: { name: ":authority", string_match: { prefix: "127." } }
+                    - header: { name: ":authority", string_match: { prefix: "169.254." } }
+                    - header: { name: ":authority", string_match: { prefix: "0." } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "^100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*" } } }
+                    # RFC 1918. Nothing in corporate address space is reachable from an egress node
+                    # today (SR-004) and this keeps it that way if that ever stops being true.
+                    - header: { name: ":authority", string_match: { prefix: "10." } }
+                    - header: { name: ":authority", string_match: { prefix: "192.168." } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "^172\\.(1[6-9]|2[0-9]|3[01])\\..*" } } }
+                    # Names that resolve to the node itself.
+                    - header: { name: ":authority", string_match: { prefix: "localhost", ignore_case: true } }
+                    # IPv6 literals. DNS here is V4_ONLY, so a bracketed authority is either an
+                    # attempt to reach something by address or an IPv6 leak; neither is wanted.
+                    - header: { name: ":authority", string_match: { prefix: "[" } }
           - name: envoy.filters.http.dynamic_forward_proxy
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig

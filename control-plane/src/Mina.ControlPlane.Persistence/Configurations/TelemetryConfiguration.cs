@@ -21,7 +21,7 @@ internal sealed class HostnameObservationConfiguration : IEntityTypeConfiguratio
         builder.Property(o => o.SessionId).IsRequired();
         builder.Property(o => o.Region).IsRequired().HasMaxLength(64);
         builder.Property(o => o.OccurredAt).IsRequired();
-        builder.Property(o => o.Hostname).IsRequired().HasMaxLength(253); // maximum DNS name length
+        builder.Property(o => o.Hostname).IsRequired().HasMaxLength(HostnameObservation.MaxHostnameLength);
         builder.Property(o => o.Port).IsRequired();
         builder.Property(o => o.BytesUp).IsRequired();
         builder.Property(o => o.BytesDown).IsRequired();

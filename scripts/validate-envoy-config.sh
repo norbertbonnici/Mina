@@ -18,10 +18,11 @@ openssl x509 -req -in "$WORK/server.csr" -CA "$WORK/ca.crt" -CAkey "$WORK/ca.key
   -days 1 -sha256 -extfile <(printf "subjectAltName=DNS:egress.local,IP:127.0.0.1") \
   -out "$WORK/server.crt" 2>/dev/null
 
-# Redirect both the TLS material and the access log into the temp dir, so validation touches
-# nothing outside it.
+# Redirect the TLS material, the access log and the admin socket into the temp dir, so validation
+# touches nothing outside it.
 sed -e "s#/etc/mina/tls#$WORK#g" \
     -e "s#/var/log/mina/envoy-access.log#$WORK/envoy-access.log#g" \
+    -e "s#/run/mina/envoy-admin.sock#$WORK/envoy-admin.sock#g" \
     "$CONFIG" > "$WORK/envoy.yaml"
 
 echo "Validating $CONFIG with $("$ENVOY" --version 2>/dev/null | tr -d '\n')"

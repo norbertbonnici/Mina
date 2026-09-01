@@ -31,7 +31,7 @@ internal sealed partial class AuditExportBackgroundService(
             {
                 break;
             }
-            catch (Exception ex) when (ex is IOException or InvalidOperationException or AuditWriteException)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // An export failure leaves the chain unanchored for longer; it does not lose events,
                 // and the next pass re-exports from the same point.

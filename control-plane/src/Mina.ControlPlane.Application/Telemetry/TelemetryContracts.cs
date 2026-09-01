@@ -25,8 +25,12 @@ public sealed record TelemetryBatch(string Region, IReadOnlyList<TelemetryItem> 
 /// Items that arrived carrying a hostname for a session the control plane has suppressed. Each one
 /// means a node is still collecting what it was told to stop collecting (threat N5).
 /// </param>
+/// <param name="Rejected">
+/// Items dropped as malformed — today, a hostname longer than DNS permits. Counted separately so a
+/// node sending rubbish is visible rather than silently shrinking the telemetry record.
+/// </param>
 public sealed record TelemetryIngestResult(
-    int Recorded, int Aggregated, int Unattributable, int SuppressionMismatches);
+    int Recorded, int Aggregated, int Unattributable, int SuppressionMismatches, int Rejected = 0);
 
 /// <summary>
 /// A session as an egress node needs to see it: whether to admit it, and whether to withhold

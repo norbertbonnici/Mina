@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -81,14 +80,19 @@ public sealed class EnvoyProcess : IAsyncDisposable
         }
 
         var ingressPort = FreePort();
-        var adminPort = FreePort();
+        var adminSocket = Path.Combine(work.FullName, "admin.sock");
         var configPath = Path.Combine(work.FullName, "envoy.yaml");
         File.WriteAllText(configPath, File.ReadAllText(LocateConfig())
             .Replace("/etc/mina/tls", work.FullName, StringComparison.Ordinal)
             .Replace("/var/log/mina/envoy-access.log",
                 Path.Combine(work.FullName, "envoy-access.log"), StringComparison.Ordinal)
+            .Replace("/run/mina/envoy-admin.sock", adminSocket, StringComparison.Ordinal)
             .Replace("port_value: 8443", $"port_value: {ingressPort}", StringComparison.Ordinal)
-            .Replace("port_value: 9901", $"port_value: {adminPort}", StringComparison.Ordinal));
+            // The only rule relaxed for tests: the destination deny-list refuses loopback, and a
+            // test's target server has nowhere else to live. Narrowing the prefix rather than
+            // removing the rule keeps the filter, and every other range, exactly as shipped — so a
+            // test can still prove that a CONNECT to 169.254.169.254 is refused.
+            .Replace("prefix: \"127.\"", "prefix: \"127.128.\"", StringComparison.Ordinal));
 
         var startInfo = new ProcessStartInfo(envoyBinary)
         {
@@ -122,7 +126,7 @@ public sealed class EnvoyProcess : IAsyncDisposable
         var envoy = new EnvoyProcess(process, work, writer, ingressPort);
         try
         {
-            await WaitForReadyAsync(adminPort, process, cancellationToken).ConfigureAwait(false);
+            await WaitForReadyAsync(adminSocket, process, cancellationToken).ConfigureAwait(false);
             return envoy;
         }
         catch
@@ -132,11 +136,33 @@ public sealed class EnvoyProcess : IAsyncDisposable
         }
     }
 
-    private static async Task WaitForReadyAsync(int adminPort, Process process, CancellationToken cancellationToken)
+    /// <summary>
+    /// Polls the admin <c>/ready</c> endpoint over its Unix socket. The admin interface is not on
+    /// TCP in the shipped config — a loopback port would be reachable through the proxy itself —
+    /// so the readiness check dials the pipe the same way an operator on the node would.
+    /// </summary>
+    private static async Task WaitForReadyAsync(string adminSocket, Process process, CancellationToken cancellationToken)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(500) };
-        var readyUri = new Uri(
-            string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{adminPort}/ready"));
+        using var handler = new SocketsHttpHandler
+        {
+            ConnectCallback = async (_, ct) =>
+            {
+                var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                try
+                {
+                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(adminSocket), ct).ConfigureAwait(false);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            },
+        };
+
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(500) };
+        var readyUri = new Uri("http://localhost/ready");
 
         for (var attempt = 0; attempt < 120; attempt++)
         {
@@ -153,7 +179,7 @@ public sealed class EnvoyProcess : IAsyncDisposable
                     return;
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or SocketException)
             {
                 // not listening yet
             }
