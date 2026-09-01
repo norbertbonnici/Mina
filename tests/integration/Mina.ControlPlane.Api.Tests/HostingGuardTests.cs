@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Mina.ControlPlane.Hosting;
 
 namespace Mina.ControlPlane.Api.Tests;
 
@@ -33,11 +34,30 @@ public sealed class HostingGuardTests
     {
         // The switch exists so a reviewer or a demo can run the whole platform on stand-ins. What it
         // must not be is the default outside Development.
-        using var factory = new UnconfiguredProductionFactory(allowFallbacks: true);
+        using var factory = new UnconfiguredProductionFactory(allowFallbacks: true, separateListeners: true);
 
         var failure = Record.Exception(() => _ = factory.Services.GetRequiredService<IConfiguration>());
 
         Assert.Null(failure);
+    }
+
+    [Fact]
+    public void Accepting_the_development_stand_ins_does_not_also_disable_listener_separation()
+    {
+        // These have to be independent switches. While the Key Vault CA (M2-2c) and the
+        // immutable-blob sink (M6-6) are unbuilt, every non-Development host must set
+        // AllowDevelopmentFallbacks simply to boot — so if the listener guard hung off that flag,
+        // the one configuration the separation exists to protect would be the one that turned it
+        // off, and a single listener would be published to the internet serving the approvals and
+        // audit APIs.
+        using var factory = new UnconfiguredProductionFactory(allowFallbacks: true);
+
+        var failure = Record.Exception(() => _ = factory.Services);
+
+        Assert.NotNull(failure);
+        var message = Flatten(failure!);
+        Assert.Contains("Refusing to start", message, StringComparison.Ordinal);
+        Assert.Contains("NodePort", message, StringComparison.Ordinal);
     }
 
     private static string Flatten(Exception exception)
@@ -55,12 +75,19 @@ public sealed class HostingGuardTests
     /// A host that believes it is in production and has been given no store, no certificate
     /// authority and no audit sink — the shape a mistyped deployment produces.
     /// </summary>
-    private sealed class UnconfiguredProductionFactory(bool allowFallbacks = false)
+    private sealed class UnconfiguredProductionFactory(
+        bool allowFallbacks = false, bool separateListeners = false)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Production");
+
+            if (separateListeners)
+            {
+                builder.UseSetting($"{MinaListenerOptions.Section}:NodePort", "18771");
+                builder.UseSetting($"{MinaListenerOptions.Section}:ManagementPort", "18772");
+            }
 
             // UseSetting, not ConfigureAppConfiguration: the guard is read while Program.cs is
             // composing the container, which is before configuration callbacks are applied. That is

@@ -58,7 +58,13 @@ Three supporting decisions were taken with it:
 
 1. **Split listeners, enforced by binding, not by routing.** The two listeners bind separate ports
    and the reverse proxy publishes only the node-facing one. An endpoint that is not mapped on the
-   published listener cannot be reached from the internet even if the proxy is misconfigured.
+   published listener cannot be reached from the internet even if the proxy is misconfigured. On the
+   published listener the rule is **default deny**: an endpoint that has not declared which listener
+   it belongs to is refused there. That is not tidiness — ASP.NET Core substitutes a metadata-less
+   synthetic endpoint when a path matches a route but the method does not, so serving undeclared
+   endpoints let a wrong-method request enumerate the entire management route table, and its verbs,
+   from the internet. The deny is one-directional: the corporate listener keeps normal framework
+   behaviour, because it is not the exposure being defended.
 2. **DMZ placement.** The control plane sits in a dedicated Proxmox DMZ VLAN, firewalled from the
    corporate LAN. Only the flows the platform needs cross that boundary: SQL (co-located in the same
    segment), Wazuh and SigNoz delivery, outbound Entra/Arc/Key Vault/Storage, and administrator

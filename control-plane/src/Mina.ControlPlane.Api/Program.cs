@@ -107,7 +107,7 @@ builder.Services.AddSingleton<IEgressDirectory, ConfiguredEgressDirectory>();
 builder.Services.AddScoped<ISessionAuditSink, PersistentSessionAuditSink>();
 builder.Services.AddSingleton(TimeProvider.System);
 HostingGuard.RequireExplicitFallback(
-    allowDevelopmentFallbacks || listenersSeparated,
+    listenersSeparated || HostingGuard.SingleListenerAllowed(builder.Configuration, builder.Environment),
     "a single listener serving the node API and the management surface together, so publishing it "
     + "to the DMZ would publish the approvals UI and the audit read API with it",
     $"{MinaListenerOptions.Section}:NodePort and :ManagementPort");
@@ -200,7 +200,8 @@ app.UseAuthorization();
 // No listener declared: the health probe answers on both, so the DMZ proxy and the corporate load
 // balancer can each check the listener they front.
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", component = "mina-control-plane-api" }))
-    .AllowAnonymous();
+    .AllowAnonymous()
+    .AllowOnAnyListener();
 
 // Published to the internet from the FIAU DMZ: the egress nodes' allowlist and telemetry ingest,
 // and nothing else.

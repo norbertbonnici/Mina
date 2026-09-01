@@ -108,6 +108,44 @@ public sealed class ListenerSeparationTests : IAsyncLifetime, IDisposable
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("/api/audit/recent")]
+    [InlineData("/api/sensitive-requests/pending")]
+    [InlineData("/api/regions")]
+    [InlineData("/api/sessions")]
+    public async Task A_wrong_method_does_not_disclose_the_management_surface(string path)
+    {
+        // The gap every other case here misses, because they all probe an endpoint with the verb it
+        // accepts. When the path matches a route but the method does not, ASP.NET Core substitutes a
+        // synthetic 405 endpoint that carries no metadata at all — including no listener metadata.
+        // A middleware that treats "no listener declared" as "serve it" therefore answers 405 with
+        // an Allow header on the published port, which enumerates the whole management route table
+        // and its verbs to an unauthenticated internet caller.
+        using var client = Client(NodePort, "Mina.Admin,Mina.Approver,Mina.Analyst");
+
+        using var request = new HttpRequestMessage(HttpMethod.Options, new Uri(path, UriKind.Relative));
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.DoesNotContain(response.Content.Headers, h =>
+            h.Key.Equals("Allow", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(response.Headers.Location);
+    }
+
+    [Fact]
+    public async Task A_wrong_method_still_answers_normally_on_the_corporate_listener()
+    {
+        // The control leg: 405 is the correct answer there, so the fix must not turn every
+        // method mismatch into a 404 everywhere.
+        using var client = Client(ManagementPort, "Mina.Admin");
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Options, new Uri("/api/audit/recent", UriKind.Relative));
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+    }
+
     [Fact]
     public async Task The_health_probe_answers_on_both_listeners()
     {

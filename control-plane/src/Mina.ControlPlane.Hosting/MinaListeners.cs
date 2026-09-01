@@ -51,10 +51,29 @@ public sealed class MinaListenerOptions
     };
 }
 
-/// <summary>Marks an endpoint as belonging to one listener. Read by the separation middleware.</summary>
-public sealed class MinaListenerMetadata(MinaListener listener)
+/// <summary>
+/// Marks an endpoint as belonging to one listener, or to both. Read by the separation middleware.
+/// </summary>
+/// <remarks>
+/// An endpoint carrying none of this metadata is refused on a separated host, not served. That
+/// default is not tidiness: when a path matches a route but the HTTP method does not, ASP.NET Core
+/// substitutes a synthetic method-rejection endpoint whose metadata collection is empty. Serving
+/// metadata-less endpoints meant a wrong-method request to any management path answered 405 with an
+/// <c>Allow</c> header on the published listener, enumerating the whole management route table and
+/// its verbs to an unauthenticated internet caller — while a genuinely absent path answered 404.
+/// Defaulting to deny also means an endpoint added without declaring a listener disappears in
+/// testing rather than appearing on the internet.
+/// </remarks>
+public sealed class MinaListenerMetadata
 {
-    public MinaListener Listener { get; } = listener;
+    private MinaListenerMetadata(MinaListener? listener) => Listener = listener;
+
+    /// <summary>The listener this endpoint belongs to, or null when it belongs to both.</summary>
+    public MinaListener? Listener { get; }
+
+    public static MinaListenerMetadata For(MinaListener listener) => new(listener);
+
+    public static MinaListenerMetadata Any { get; } = new(null);
 }
 
 /// <summary>
@@ -121,7 +140,20 @@ public static class MinaListeners
         where TBuilder : IEndpointConventionBuilder
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.Add(endpoint => endpoint.Metadata.Add(new MinaListenerMetadata(listener)));
+        builder.Add(endpoint => endpoint.Metadata.Add(MinaListenerMetadata.For(listener)));
+        return builder;
+    }
+
+    /// <summary>
+    /// Declares an endpoint as belonging to both listeners — the health probe, because each
+    /// listener is fronted by something that has to check it. Deliberately explicit: the middleware
+    /// refuses anything that has not said which listener it belongs to.
+    /// </summary>
+    public static TBuilder AllowOnAnyListener<TBuilder>(this TBuilder builder)
+        where TBuilder : IEndpointConventionBuilder
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Add(endpoint => endpoint.Metadata.Add(MinaListenerMetadata.Any));
         return builder;
     }
 
@@ -136,21 +168,35 @@ public static class MinaListeners
         return app.Use(async (context, next) =>
         {
             var options = context.RequestServices.GetRequiredService<IOptions<MinaListenerOptions>>().Value;
-            var required = context.GetEndpoint()?.Metadata.GetMetadata<MinaListenerMetadata>();
+            var endpoint = context.GetEndpoint();
 
             // Unseparated hosts (local development, the test host) serve everything, which is why
-            // the startup guard refuses that shape outside Development. An endpoint with no listener
-            // declared — the health probe — is served on both.
-            if (!options.Separated || required is null)
+            // the startup guard refuses that shape outside Development. A request that matched no
+            // endpoint at all is left to the framework's own 404.
+            if (!options.Separated || endpoint is null)
             {
                 await next(context).ConfigureAwait(false);
                 return;
             }
 
-            if (context.Connection.LocalPort != options.PortFor(required.Listener))
+            var declared = endpoint.Metadata.GetMetadata<MinaListenerMetadata>();
+
+            // Default deny, but only on the published listener. The property being defended is
+            // one-directional: the node listener faces the internet and must expose exactly what it
+            // declares, so anything undeclared — including the synthetic method-rejection endpoint,
+            // which carries no metadata — is refused there. The corporate listener is not that
+            // exposure, so an undeclared endpoint keeps normal framework behaviour and a wrong
+            // method still answers 405 for whoever is debugging it. The cost of the asymmetry is
+            // that a wrong method on a node route also answers 404 rather than 405, which discloses
+            // less and is the right trade on an internet-facing port.
+            var onPublishedListener = context.Connection.LocalPort == options.NodePort;
+
+            if ((declared is null && onPublishedListener)
+                || (declared?.Listener is { } listener && context.Connection.LocalPort != options.PortFor(listener)))
             {
-                // 404, not 403: on this listener the endpoint does not exist. Answering anything
-                // else would confirm the management API is present on the published port.
+                // 404, not 403 or 405: on this listener the endpoint does not exist. Anything else
+                // confirms the management API is present on the published port, which is the whole
+                // property this middleware is here to provide.
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
                 return;
             }

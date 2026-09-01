@@ -31,6 +31,15 @@ public static class HostingGuard
     /// <summary>Directory the Data Protection key ring is persisted to. Required off App Service.</summary>
     public const string DataProtectionKeyPathKey = "Mina:Hosting:DataProtectionKeyPath";
 
+    /// <summary>
+    /// Opt-in switch for running both surfaces on one listener. Separate from
+    /// <see cref="AllowDevelopmentFallbacksKey"/> on purpose: while the Key Vault CA (M2-2c) and the
+    /// immutable-blob audit sink (M6-6) are unbuilt, every non-Development host has to set that flag
+    /// simply to boot — so hanging listener separation off it meant the one configuration the
+    /// separation exists to protect was also the one that switched it off.
+    /// </summary>
+    public const string AllowSingleListenerKey = "Mina:Hosting:AllowSingleListener";
+
     /// <summary>Number of reverse proxies in front of this host, for forwarded-header processing.</summary>
     public const string ForwardedProxyCountKey = "Mina:Hosting:ForwardedProxyCount";
 
@@ -68,6 +77,14 @@ public static class HostingGuard
         ArgumentNullException.ThrowIfNull(environment);
 
         return configuration.GetValue(AllowDevelopmentFallbacksKey, defaultValue: environment.IsDevelopment());
+    }
+
+    public static bool SingleListenerAllowed(IConfiguration configuration, IHostEnvironment environment)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
+
+        return configuration.GetValue(AllowSingleListenerKey, defaultValue: environment.IsDevelopment());
     }
 
     /// <summary>
