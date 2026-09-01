@@ -73,6 +73,17 @@ public sealed class PersistentSensitiveSessionAuditSink(AuditWriter writer) : IS
 {
     private readonly AuditWriter _writer = writer ?? throw new ArgumentNullException(nameof(writer));
 
+    public Task RequesterMismatchAsync(
+        Guid requestId, string byObjectId, string action, CancellationToken cancellationToken) =>
+        _writer.WriteAsync(
+            new AuditEventDraft(
+                "authz_denied",
+                AuditSeverity.Warning,
+                AuditComponent.ControlPlane,
+                UserObjectId: byObjectId,
+                Data: new { reason = "NotRequester", request_id = requestId, action }),
+            cancellationToken);
+
     public Task RequestedAsync(SensitiveSessionRequest request, CancellationToken cancellationToken) =>
         Write(request, "sensitive_requested", AuditSeverity.Notice, new
         {

@@ -36,13 +36,13 @@ retained per release (AC-019). No test may be satisfied by hard-coded behaviour.
 | Leak: WebRTC/QUIC | harness page candidates; UDP capture during session (expect none from research binary except loopback) | AC-007 |
 | Leak: startup/prefetch | packet capture from browser spawn to first proxied request; prefetch/preconnect flags honoured | THREAT N11/N12 |
 | Separation | ordinary Edge + apps → corp IP while session active; research → Azure IP | AC-002/003 |
-| Open proxy | external scans (all regions); unauthenticated CONNECT; expired/revoked cert reuse | AC-016 |
+| Open proxy | external scans (all regions); unauthenticated CONNECT (covered by `EnvoyClientAuthTests` against a real Envoy, with a meta-test proving the guard detects removal of `require_client_certificate`); expired cert reuse. **Revoked-cert reuse is expected to succeed** until the certificate expires — the node admits on certificate validity alone (D-14) — so the case records the observed window rather than asserting refusal | AC-016 |
 | Corp reachability | probes from egress nodes to RFC1918 + corp public CIDRs + control-plane private ranges — all denied except approved dependencies | AC-017 |
 | Region authz | select unapproved region via API directly (bypass UI) — refused + audited | AC-008 |
 | Sensitive sessions | activation without approval; self-approval; TTL expiry terminates; node ack mismatch raises critical; suppressed sessions produce no hostname records but full mandatory metadata | AC-010/011/012 |
 | Roles/privileges | authorisation matrix (Analyst/Approver/Admin × every API operation); node managed-identity scope | SR-004/008 |
 | Endpoint tamper | rogue loopback client; IPC malformed/unauthorised messages; WFP rule deletion attempt as user; unmanaged browser launch | SR-006, B1 |
-| Tokens/certs | expired/not-yet-valid/replayed tokens; cert renewal after Entra revocation; revocation latency ≤ target | B3/B5 |
+| Tokens/certs | expired/not-yet-valid/replayed tokens; cert renewal after Entra revocation; revocation latency measured against the lease TTL, which is the target while admission is by certificate validity alone (D-14) | B3/B5 |
 | Telemetry hygiene | scan Wazuh and SigNoz test exports for URL/hostname patterns (must be zero); audit completeness per event catalogue | AC-013/014 |
 | Break glass | drill: emergency sign-in + Azure action in test → high-severity Wazuh events within SLA | AC-015 |
 | IaC rebuild | destroy/recreate test environment from scratch; all suites green | AC-018 |

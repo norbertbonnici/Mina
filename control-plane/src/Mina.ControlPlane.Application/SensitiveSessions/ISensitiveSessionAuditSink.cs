@@ -20,12 +20,26 @@ public interface ISensitiveSessionAuditSink
     Task ActivatedAsync(SensitiveSessionRequest request, CancellationToken cancellationToken);
 
     Task ExpiredAsync(SensitiveSessionRequest request, bool sessionTerminated, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Someone who is not the requester tried to act on an existing request. Recorded for the same
+    /// reason the session routes record a non-owner attempt: once the API answers a stranger and a
+    /// non-existent id identically, the trail is the only place the difference survives, and it is
+    /// the half an investigator needs. Only reached for a request that exists — a miss is not
+    /// audited, per D-15.
+    /// </summary>
+    Task RequesterMismatchAsync(
+        Guid requestId, string byObjectId, string action, CancellationToken cancellationToken);
 }
 
 /// <summary>No-op sink for tests that do not assert on audit.</summary>
 public sealed class NullSensitiveSessionAuditSink : ISensitiveSessionAuditSink
 {
     public static NullSensitiveSessionAuditSink Instance { get; } = new();
+
+    public Task RequesterMismatchAsync(
+        Guid requestId, string byObjectId, string action, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 
     public Task RequestedAsync(SensitiveSessionRequest request, CancellationToken cancellationToken) =>
         Task.CompletedTask;

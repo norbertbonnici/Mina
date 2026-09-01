@@ -132,17 +132,22 @@ Endpoint enforcement design (variant C2, recommended):
 
 - **Public Standard Load Balancer** with one static **ingress** public IP, TCP 443 only.
   Optionally source-restricted to FIAU's corporate egress CIDRs (decision D-07).
-- **Envoy on Linux VMSS** (2+ instances): terminates mTLS (platform internal CA; client
-  certificate must chain and carry a currently valid session ID), terminates HTTP/2, serves
-  CONNECT, opens upstream connections, emits per-connection hostname telemetry (unless the
-  session is suppression-flagged), enforces per-session policy pushed from the control plane.
+- **Envoy on Linux VMSS** (2+ instances): terminates mTLS (platform internal CA; the client
+  certificate must chain to that CA and be unexpired — Envoy does **not** check a session
+  allowlist, so admission is by certificate validity alone; see the revocation note in §4 and
+  backlog M4-11), terminates HTTP/2, serves CONNECT, applies the destination deny-list for
+  private and link-local space, opens upstream connections, and emits per-connection hostname
+  telemetry. Suppression is applied by the sidecar and the control plane, not by Envoy, which has
+  no per-session policy of any kind.
   Hardened minimal image, rebuilt from IaC/pipeline, no inbound management from the internet
   (Azure-native management path only).
 - **NAT Gateway** with a static public IP prefix (e.g. /30): the **egress** identity analysts
   appear from. Deliberately distinct from the ingress IP.
 - **Node sidecar** (small, may be .NET): pulls session allowlist/suppression flags from the
-  control-plane API every ~30 s using its managed identity (also push-notified for fast
-  revocation), ships Envoy telemetry to the control plane/relay, runs the Wazuh agent.
+  control-plane API every ~30 s using its managed identity — polling only; there is no push
+  channel, and the pull interval bounds how quickly a *suppression* flag reaches the node, not how
+  quickly a session stops being admitted. It ships Envoy telemetry to the control plane/relay and
+  runs the Wazuh agent.
 - **NSG/route posture**: outbound to Internet allowed; outbound to RFC1918, Azure service tags
   for corp-peered ranges, and the corporate public CIDRs **denied**; no VNet peering to
   anything except (optionally) the control-plane VNet for config — and even that is
@@ -214,7 +219,7 @@ sequenceDiagram
     A->>C: POST /sessions {region, CSR} + token
     C->>C: Authorise: role, region approved, device-bound token (+ CA auth context when configured)
     C-->>A: Session ID + client cert (60 min) + egress endpoint
-    C->>X: Push session allowlist entry
+    X->>C: Pull session allowlist (~30 s, suppression flags only)
     C->>C: Audit: session_started → Wazuh
     A->>X: mTLS HTTP/2 tunnel (client cert)
     A->>A: Open loopback proxy, then spawn research browser
@@ -267,8 +272,8 @@ stateDiagram-v2
     REQUESTED --> DENIED: approver denies
     REQUESTED --> APPROVED: approver (≠ requester) approves, TTL set
     REQUESTED --> CANCELLED: analyst withdraws
-    APPROVED --> ACTIVE_SUPPRESSED: control plane activates + pushes flag to nodes
-    ACTIVE_SUPPRESSED --> ENDED_EXPIRED: TTL expiry ⇒ session terminated
+    APPROVED --> ACTIVE_SUPPRESSED: control plane activates; nodes pick the flag up on next pull
+    ACTIVE_SUPPRESSED --> ENDED_EXPIRED: TTL expiry ⇒ session terminated (D-06a: activated only)
     ACTIVE_SUPPRESSED --> ENDED_EXPIRED: analyst ends early
     DENIED --> NORMAL
     CANCELLED --> NORMAL

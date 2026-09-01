@@ -152,6 +152,8 @@ public sealed class SensitiveSessionService(
         // 403 for an undecided one — the same oracle, one level down.
         if (!request.IsRequester(principal.UserObjectId))
         {
+            await _audit.RequesterMismatchAsync(requestId, principal.UserObjectId, "cancel", cancellationToken)
+                .ConfigureAwait(false);
             throw new SensitiveSessionAuthorizationException(SensitiveSessionDenialReason.NotRequester);
         }
 
@@ -175,6 +177,8 @@ public sealed class SensitiveSessionService(
         var request = await RequireRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
         if (!request.IsRequester(principal.UserObjectId))
         {
+            await _audit.RequesterMismatchAsync(requestId, principal.UserObjectId, "activate", cancellationToken)
+                .ConfigureAwait(false);
             throw new SensitiveSessionAuthorizationException(SensitiveSessionDenialReason.NotRequester);
         }
 
@@ -269,9 +273,13 @@ public sealed class SensitiveSessionService(
         // there is no continuation of suppressed activity to protect — and taking a live, normally
         // logged session away because an unused approval lapsed taught analysts to avoid the
         // approved workflow, which is the opposite of what the workflow is for.
+        // IsUsableAt, not State == Active: nothing sweeps lapsed session leases, so a session whose
+        // lease ran out hours ago still sits at State = Active. Checking the state alone would
+        // "terminate" a session that was already dead and write a session_revoked event asserting an
+        // action that did nothing. A lapsed session needs no terminating — it is already unusable.
         var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
         var terminating = request.ActivatedAt is not null
-            && session is not null && session.State == SessionState.Active;
+            && session is not null && session.IsUsableAt(now);
 
         // Revoke BEFORE the audit write, not after. Both mutations are already tracked by the time
         // the audit event is appended, and appending flushes the whole unit of work — so writing the

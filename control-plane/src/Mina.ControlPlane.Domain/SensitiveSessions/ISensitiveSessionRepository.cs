@@ -14,9 +14,11 @@ public interface ISensitiveSessionRepository
     Task UpdateAsync(SensitiveSessionRequest request, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Requests awaiting an approval decision, oldest first — the approver's queue. Bounded: an
-    /// unbounded read of a queue anyone with the analyst role can add to is the one query in this
-    /// system whose size an ordinary user controls.
+    /// Requests awaiting an approval decision, oldest first — the approver's queue. Bounded,
+    /// because an analyst can lengthen it at will and an unbounded read of it is a query whose size
+    /// an ordinary user controls. It is not the only one: the active-session set behind
+    /// <c>ISessionQueries.ListActiveAsync</c> is also analyst-driven and still unbounded, and grows
+    /// without limit while nothing sweeps lapsed leases (backlog M4-12).
     /// </summary>
     /// <param name="limit">
     /// Maximum requests to return. Implementations read one more than this so the caller can tell

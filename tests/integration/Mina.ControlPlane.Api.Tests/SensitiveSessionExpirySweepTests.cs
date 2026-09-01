@@ -213,6 +213,10 @@ public sealed class SensitiveSessionExpirySweepTests : IDisposable
                 : Task.CompletedTask;
         }
 
+        public Task RequesterMismatchAsync(
+            Guid requestId, string byObjectId, string action, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
         public Task RequestedAsync(SensitiveSessionRequest request, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 

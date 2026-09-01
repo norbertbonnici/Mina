@@ -263,6 +263,26 @@ public class SensitiveSessionServiceTests
         Assert.Equal(SensitiveSessionDenialReason.RequestNotFound, ex.Reason);
     }
 
+    [Fact]
+    public async Task Expiry_does_not_terminate_a_session_whose_lease_already_lapsed()
+    {
+        var h = new Harness();
+        var request = await h.RequestAsync();
+        await h.Service.ApproveAsync(h.Approver, request.RequestId, TimeSpan.FromHours(2), default);
+        await h.Service.ActivateAsync(h.Analyst, request.RequestId, default);
+
+        // Past the approval window AND past the 8-hour session lease. Nothing sweeps lapsed leases
+        // (M4-12), so the session row still reads State = Active — but it has been unusable for
+        // hours. Revoking it now would write a session_revoked event for an action that changed
+        // nothing real.
+        h.Clock.Advance(TimeSpan.FromHours(9));
+        Assert.Equal(1, await h.ExpireDueAsync());
+
+        Assert.Equal(SensitiveSessionState.Ended,
+            (await h.Service.GetAsync(h.Analyst, request.RequestId, default)).State);
+        Assert.NotEqual(SessionState.Revoked, h.Session.State);
+    }
+
     private sealed class Harness
     {
         public Harness()

@@ -49,9 +49,12 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
   proxy/rules). *Test:* AC-002.
 
 ### B3. Endpoint ↔ Azure ingress
-- **S:** stolen client cert reused elsewhere. *Mitigate:* 60-min TTL, renewal requires fresh
-  Entra token (device-bound WAM/PRT), cert bound to session ID, node allowlist revocation.
-  *Test:* token/cert expiry + revocation tests.
+- **S:** stolen client cert reused elsewhere. *Mitigate:* 60-min TTL and renewal requiring a fresh
+  device-bound Entra token; the certificate carries its session id in a SAN URI, which attributes
+  its traffic but is **not checked for admission** — the node has no session allowlist enforcement
+  (D-14), so a stolen certificate works until it expires. The TTL is therefore the whole of this
+  mitigation, not a backstop to it. *Test:* token/cert expiry tests; a revocation-latency test must
+  measure against the lease TTL (see M4-11 if that is to change).
 - **D (DoS):** ingress flooding. *Mitigate:* 443-only, optional corp-CIDR allowlist, LB/NSG,
   autoscale headroom, alerting. *Test:* load test + alert check.
 
@@ -100,10 +103,10 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 | WebRTC exposes address/path | IP-handling policy + WFP UDP block + mDNS obfuscation; harness test (AC-007) |
 | Analyst disables logging locally | Telemetry originates at egress node, not endpoint; nothing to disable client-side (ADR-0002 Opt 1) |
 | Analyst obtains suppression without approval | Server-side state machine; activation requires APPROVED record, approver ≠ requester (AC-010) |
-| Approval never expires | TTL mandatory, expiry terminates session, scheduler + clock-skew tests (AC-011) |
+| Approval never expires | TTL mandatory; expiry ends the approval always, and terminates the session when suppression was activated (D-06a); scheduler + clock-skew tests (AC-011) |
 | Egress node becomes open proxy | mTLS against the internal CA; no unauthenticated listener; destination deny-list for private/link-local space; external scans (AC-016). The node does **not** check a session allowlist before admitting a tunnel, so a revoked session's certificate works until it expires (≈60 min) — backlog M4-11 |
 | Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017) |
-| Entra token stolen | Short session certs renewable only with fresh device-bound tokens; revocation ≤30 s at node |
+| Entra token stolen | Short session certs renewable only with fresh device-bound tokens. Revocation is refusal to renew, so the exposure window is the lease TTL (≈60 min) — **not** ≤30 s: the node performs no allowlist check before admitting a tunnel (D-14, M4-11) |
 | Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC |
 | Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence) |
 | Break-glass abused | §4/B8 |

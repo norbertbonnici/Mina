@@ -37,14 +37,13 @@ record; at-least-once with `event_id` de-duplication.
 
 | event_type | Severity | Emitted by | data payload (key fields) |
 |---|---|---|---|
-| auth_success | info | control-plane | roles, token device claims present |
-| auth_failure | warning | control-plane | reason (`invalid_token`, `NotAuthorisedRole`, `DeviceNotBound`, `AuthenticationContextRequired`, `RegionNotSelectable`), source IP |
-| authz_denied | warning | control-plane | attempted action, required role |
+| authz_denied | warning | control-plane | `reason` — one of `NotAuthorisedRole`, `DeviceNotBound`, `AuthenticationContextRequired`, `RegionNotSelectable`, `NotSessionOwner`; plus region where known |
+| auth_success / auth_failure | — | *not emitted* | Token validation happens in the Entra middleware, which raises nothing into this chain. Sign-in successes and failures live in Entra's own sign-in logs; correlate there, not here |
 | session_started | info | control-plane | region, egress_ip_prefix, client_cert_serial |
 | session_renewed | info | control-plane | cert_serial_old/new |
 | session_ended | info | control-plane | reason (user, browser_closed, tunnel_lost) |
 | session_revoked | high | control-plane | actor, reason |
-| session_expired | notice | control-plane | — |
+| session_expired | notice | *not emitted yet* | Nothing sweeps lapsed leases, so a session that simply runs out stays `Active` in the store with no terminal event — backlog M4-12 |
 | region_selected | info | control-plane | region; rejected attempts → authz_denied |
 | region_rejected | warning | control-plane | requested unapproved region |
 | sensitive_requested | notice | control-plane | justification_ref, requested_minutes |
@@ -67,7 +66,9 @@ record; at-least-once with `event_id` de-duplication.
 | admin_action | notice | management-ui/control-plane | action, target |
 
 Wazuh side: rules map severities (`high`→level 10+, `critical`→level 13+ suggested), with
-correlation rules for: repeated auth_failure per user/device; sensitive_suppression_mismatch
+correlation rules for: repeated `authz_denied` per user/device (note that a
+`reason` of `AuthenticationContextRequired` is a routine Conditional Access step-up, not a refusal —
+correlate on challenges that never convert into a `session_started`); sensitive_suppression_mismatch
 (page immediately); any break_glass_*; client_tamper_suspected clusters.
 
 ## 4. Hostname telemetry record (audit store only — never Wazuh/SigNoz)
@@ -123,9 +124,14 @@ the relay is unreachable; `audit_pipeline_degraded` fires past thresholds. Contr
 writes are synchronous with the action they record: if the audit store is unavailable,
 governance actions fail closed (the action does not proceed unlogged).
 
-That guarantee comes from the transactional store, not from ordering alone. The audit append and
-the state change it describes share one database transaction, so neither survives without the
-other; `tests/integration/Mina.ControlPlane.Persistence.Tests/AuditGatesGovernanceActionsTests.cs`
+That guarantee comes from the transactional store, not from ordering alone, and it is not uniform
+across the paths. Where the aggregate is already tracked — approve, deny, cancel, activate, expire,
+renew, end — the audit append flushes the pending mutation with it, so the event and the state
+change share one transaction and neither survives without the other. On the two **create** paths
+(session issue, suppression request) the entity is not yet tracked when the event is written, so the
+event commits first and the row is written by a second save: a failure in between leaves an event
+for something that does not exist. That is over-recording, which is the deliberate direction here —
+an audit trail that claims too much is recoverable, one that claims too little is not. `tests/integration/Mina.ControlPlane.Persistence.Tests/AuditGatesGovernanceActionsTests.cs`
 holds it by making the audit insert fail. It does **not** hold for the in-memory development
 stores, which hold aggregates by reference — a mutation is visible there the moment it is made,
 with no transaction to roll back. Those stores are for local development only and the host logs a
