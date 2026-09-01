@@ -35,11 +35,27 @@ public sealed class EfSensitiveSessionRepository(MinaDbContext context) : ISensi
         await _context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<SensitiveSessionRequest>> ListPendingAsync(CancellationToken cancellationToken) =>
-        await _context.SensitiveSessionRequests
+    public async Task<PendingRequestPage> ListPendingAsync(int limit, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+
+        // One more than asked for, so "there is more" is known without a second COUNT. The
+        // (State, RequestedAt) index makes this a seek rather than a scan.
+        var page = await _context.SensitiveSessionRequests
             .Where(r => r.State == SensitiveSessionState.Requested)
             .OrderBy(r => r.RequestedAt)
+            .Take(limit + 1)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return page.Count > limit
+            ? new PendingRequestPage(page.Take(limit).ToList(), HasMore: true)
+            : new PendingRequestPage(page, HasMore: false);
+    }
+
+    public async Task<int> CountPendingAsync(CancellationToken cancellationToken) =>
+        await _context.SensitiveSessionRequests
+            .CountAsync(r => r.State == SensitiveSessionState.Requested, cancellationToken)
+            .ConfigureAwait(false);
 
     public async Task<IReadOnlyList<SensitiveSessionRequest>> ListForSessionAsync(
         Guid sessionId, CancellationToken cancellationToken) =>
@@ -49,10 +65,18 @@ public sealed class EfSensitiveSessionRepository(MinaDbContext context) : ISensi
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<IReadOnlyList<SensitiveSessionRequest>> ListExpiredAsync(
-        DateTimeOffset asOf, CancellationToken cancellationToken) =>
-        await _context.SensitiveSessionRequests
+        DateTimeOffset asOf, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+
+        // Oldest first: whatever does not fit in this sweep is the newest, and it is the ones that
+        // have been over their window longest that most need ending.
+        return await _context.SensitiveSessionRequests
             .Where(r => (r.State == SensitiveSessionState.Approved
                          || r.State == SensitiveSessionState.ActiveSuppressed)
                         && r.ExpiresAt != null && r.ExpiresAt <= asOf)
+            .OrderBy(r => r.ExpiresAt)
+            .Take(limit)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
 }

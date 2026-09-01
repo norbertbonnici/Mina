@@ -71,7 +71,7 @@
         var active = await Sessions.ListActiveAsync(now, CancellationToken.None);
         _active = active.Count;
         _sensitive = active.Count(s => s.Mode == SessionMode.Sensitive);
-        _pending = (await Requests.ListPendingAsync(CancellationToken.None)).Count;
+        _pending = await Requests.CountPendingAsync(CancellationToken.None);
 
         // Approved regions, with the active ones marked — an approved region without a stamp is
         // deliberately not offered to analysts (AC-008).

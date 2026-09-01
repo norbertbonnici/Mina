@@ -95,9 +95,9 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
         }
 
         await using var verify = _db.CreateContext();
-        var pending = await new EfSensitiveSessionRepository(verify).ListPendingAsync(default);
+        var pending = await new EfSensitiveSessionRepository(verify).ListPendingAsync(100, default);
 
-        var references = pending.Select(r => r.JustificationReference).ToList();
+        var references = pending.Requests.Select(r => r.JustificationReference).ToList();
         Assert.DoesNotContain("CASE-DECIDED", references);
         Assert.True(references.IndexOf("CASE-OLD") < references.IndexOf("CASE-NEW"));
     }
@@ -125,7 +125,7 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
         }
 
         await using var verify = _db.CreateContext();
-        var due = await new EfSensitiveSessionRepository(verify).ListExpiredAsync(T0.AddHours(1), default);
+        var due = await new EfSensitiveSessionRepository(verify).ListExpiredAsync(T0.AddHours(1), 100, default);
 
         var references = due.Select(r => r.JustificationReference).ToList();
         Assert.Contains("CASE-ELAPSED", references);      // window closed
@@ -171,5 +171,38 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
 
         Assert.Equal(2, forSession.Count);
         Assert.DoesNotContain("CASE-OTHER", forSession.Select(r => r.JustificationReference));
+    }
+
+    [Fact]
+    public async Task A_queue_longer_than_the_page_is_reported_as_truncated()
+    {
+        await using (var context = _db.CreateContext())
+        {
+            var repository = new EfSensitiveSessionRepository(context);
+            for (var i = 0; i < 5; i++)
+            {
+                await repository.AddAsync(
+                    SensitiveSessionRequest.Create(
+                        Guid.NewGuid(), Guid.NewGuid(), AnalystOid, "analyst@fiaumalta.org",
+                        $"CASE-PAGE-{i}", TimeSpan.FromHours(1), Policy, T0.AddMinutes(i)),
+                    default);
+            }
+        }
+
+        await using var verify = _db.CreateContext();
+        var repo = new EfSensitiveSessionRepository(verify);
+
+        var page = await repo.ListPendingAsync(3, default);
+        Assert.Equal(3, page.Requests.Count);
+        Assert.True(page.HasMore);
+
+        // Oldest first, so a flood of new requests cannot push an older one out of the page.
+        Assert.Equal(
+            ["CASE-PAGE-0", "CASE-PAGE-1", "CASE-PAGE-2"],
+            page.Requests.Select(r => r.JustificationReference));
+
+        var whole = await repo.ListPendingAsync(50, default);
+        Assert.False(whole.HasMore);
+        Assert.Equal(await repo.CountPendingAsync(default), whole.Requests.Count);
     }
 }

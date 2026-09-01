@@ -122,3 +122,12 @@ operational — never audit — data under backpressure). Nodes buffer locally (
 the relay is unreachable; `audit_pipeline_degraded` fires past thresholds. Control-plane audit
 writes are synchronous with the action they record: if the audit store is unavailable,
 governance actions fail closed (the action does not proceed unlogged).
+
+That guarantee comes from the transactional store, not from ordering alone. The audit append and
+the state change it describes share one database transaction, so neither survives without the
+other; `tests/integration/Mina.ControlPlane.Persistence.Tests/AuditGatesGovernanceActionsTests.cs`
+holds it by making the audit insert fail. It does **not** hold for the in-memory development
+stores, which hold aggregates by reference — a mutation is visible there the moment it is made,
+with no transaction to roll back. Those stores are for local development only and the host logs a
+warning at startup when it is using them; no conclusion about fail-closed behaviour should be drawn
+from a run against them.

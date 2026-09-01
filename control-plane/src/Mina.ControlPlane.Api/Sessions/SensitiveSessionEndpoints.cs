@@ -28,6 +28,9 @@ public sealed record SensitiveSessionDto(
 /// refuses to let anyone decide their own request, so holding both roles still does not permit
 /// self-approval.
 /// </summary>
+/// <summary>The approver queue as returned to a client, with whether it was truncated.</summary>
+public sealed record PendingApprovalsDto(IReadOnlyList<SensitiveSessionDto> Requests, bool HasMore);
+
 public static class SensitiveSessionEndpoints
 {
     public const string ApproverPolicy = "MinaApprover";
@@ -90,7 +93,11 @@ public static class SensitiveSessionEndpoints
         ExecuteAsync(async () =>
         {
             var pending = await service.ListPendingAsync(user.ToSessionPrincipal(), ct);
-            return Results.Ok(pending.Select(ToDto));
+
+            // hasMore, not a bare array: a client that cannot tell a full queue from a truncated
+            // one will present a partial queue as the whole of it.
+            return Results.Ok(new PendingApprovalsDto(
+                [.. pending.Requests.Select(ToDto)], pending.HasMore));
         });
 
     private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)
@@ -103,7 +110,12 @@ public static class SensitiveSessionEndpoints
         {
             return ex.Reason switch
             {
-                SensitiveSessionDenialReason.RequestNotFound or SensitiveSessionDenialReason.SessionNotFound =>
+                // NotRequester joins the not-found arm for the same reason as NotSessionOwner on
+                // the session routes: a request id that exists but belongs to someone else must not
+                // be distinguishable from one that does not exist.
+                SensitiveSessionDenialReason.RequestNotFound
+                    or SensitiveSessionDenialReason.SessionNotFound
+                    or SensitiveSessionDenialReason.NotRequester =>
                     Results.NotFound(),
                 _ => Results.Problem($"Denied: {ex.Reason}", statusCode: StatusCodes.Status403Forbidden),
             };

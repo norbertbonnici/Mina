@@ -196,6 +196,44 @@ public sealed class SessionApiTests(MinaApiFactory factory) : IClassFixture<Mina
         var renew = await attacker.PostAsJsonAsync(
             new Uri($"/api/sessions/{sessionId}/renew", UriKind.Relative), new { csrPem = NewCsrPem() });
 
-        Assert.Equal(HttpStatusCode.Forbidden, renew.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, renew.StatusCode);
+    }
+
+    [Fact]
+    public async Task Another_users_session_is_indistinguishable_from_one_that_does_not_exist()
+    {
+        var owner = AnalystClient(oid: "oid-owner");
+        var issue = await owner.PostAsJsonAsync(
+            new Uri("/api/sessions", UriKind.Relative), new { region = "westeurope", csrPem = NewCsrPem() });
+        var realSessionId = JsonDocument.Parse(await issue.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("sessionId").GetGuid();
+
+        var attacker = AnalystClient(oid: "oid-attacker");
+
+        // The whole response, not just the status: an empty 404 and a problem+json body saying
+        // "Denied: NotSessionOwner" are different answers even when both are refusals, and the
+        // difference is exactly the existence oracle.
+        var real = await attacker.PostAsJsonAsync(
+            new Uri($"/api/sessions/{realSessionId}/renew", UriKind.Relative), new { csrPem = NewCsrPem() });
+        var invented = await attacker.PostAsJsonAsync(
+            new Uri($"/api/sessions/{Guid.NewGuid()}/renew", UriKind.Relative), new { csrPem = NewCsrPem() });
+
+        Assert.Equal(invented.StatusCode, real.StatusCode);
+        Assert.Equal(
+            await invented.Content.ReadAsStringAsync(),
+            await real.Content.ReadAsStringAsync());
+        Assert.Equal(
+            invented.Content.Headers.ContentType?.ToString(),
+            real.Content.Headers.ContentType?.ToString());
+
+        // Deleting has the same shape, and so does a request id on the suppression routes.
+        var deleteReal = await attacker.DeleteAsync(
+            new Uri($"/api/sessions/{realSessionId}", UriKind.Relative));
+        var deleteInvented = await attacker.DeleteAsync(
+            new Uri($"/api/sessions/{Guid.NewGuid()}", UriKind.Relative));
+        Assert.Equal(deleteInvented.StatusCode, deleteReal.StatusCode);
+        Assert.Equal(
+            await deleteInvented.Content.ReadAsStringAsync(),
+            await deleteReal.Content.ReadAsStringAsync());
     }
 }

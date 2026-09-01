@@ -116,7 +116,12 @@ public static class SessionEndpoints
 
     private static IResult Problem(SessionAuthorizationException ex) => ex.Reason switch
     {
-        SessionDenialReason.SessionNotFound => Results.NotFound(),
+        // A session that does not exist and a session belonging to someone else answer identically.
+        // Anything else is an existence oracle: an empty 404 for one and a problem+json "Denied:
+        // NotSessionOwner" for the other tells an authenticated analyst which ids are real. The
+        // distinction is kept where it belongs — the audit trail still records NotSessionOwner, so
+        // probing a colleague's session is visible to an investigator but not to the prober.
+        SessionDenialReason.SessionNotFound or SessionDenialReason.NotSessionOwner => Results.NotFound(),
         SessionDenialReason.InvalidCertificateRequest =>
             Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest),
         _ => Results.Problem($"Denied: {ex.Reason}", statusCode: StatusCodes.Status403Forbidden),

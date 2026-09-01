@@ -21,6 +21,14 @@ else if (!string.IsNullOrEmpty(Done))
     <div class="notice">@Done</div>
 }
 
+@if (_truncated)
+{
+    <div class="banner">
+        More requests are waiting than fit on this page. The oldest are shown first; decide or deny
+        some to see the rest.
+    </div>
+}
+
 @if (_pending is null)
 {
     <div class="empty">Loading…</div>
@@ -79,6 +87,7 @@ else
     private const int MaxMinutes = 240;
 
     private IReadOnlyList<SensitiveSessionView>? _pending;
+    private bool _truncated;
 
     [SupplyParameterFromQuery(Name = "error")]
     private string? Error { get; set; }
@@ -89,6 +98,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         var user = (await AuthState.GetAuthenticationStateAsync()).User;
-        _pending = await Requests.ListPendingAsync(user.ToSessionPrincipal(), CancellationToken.None);
+        var queue = await Requests.ListPendingAsync(user.ToSessionPrincipal(), CancellationToken.None);
+        _pending = queue.Requests;
+        _truncated = queue.HasMore;
     }
 }

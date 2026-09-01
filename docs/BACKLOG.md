@@ -72,6 +72,7 @@ suppressed-hostname exposure in the node's own log.
 | M4-8 | Full evidence bundle mapped to ACCEPTANCE_CRITERIA; production go/no-go review | AC-019 | M |
 | M4-9 | Retention enforcement for C3/C5 telemetry (deletion jobs) and storage lifecycle policy for exports. C1/C2 audit deletion is **excluded**: it needs its own ADR and DPO sign-off first, because removing events from an append-only, anchored chain is indistinguishable from tampering unless designed for | LOGGING_AND_PRIVACY §7, D-09 | M |
 | M4-10 | Host firewall on egress nodes denying outbound to link-local (IMDS) and RFC1918, so a public name that resolves into private space cannot be reached. Envoy's authority deny-list stops literal addresses only; post-resolution filtering is not something the proxy can do | SR-004, SECURITY_REVIEW_2026-09-01 | M |
+| M4-11 | **Decision needed first.** Node-side session-allowlist enforcement, so revoking a session refuses its tunnel rather than waiting out the certificate TTL. Envoy admits any unexpired certificate chaining to the internal CA today; the sidecar's allowlist governs suppression only. Alternative is to correct ARCHITECTURE/THREAT_MODEL to describe the certificate TTL as the revocation bound | AC-016, M2-3, SECURITY_REVIEW_2026-09-01 | M |
 | **Gate** | Human production-deployment approval | | |
 
 ## M5 — Post-MVP candidates (Phase 5, unscheduled)

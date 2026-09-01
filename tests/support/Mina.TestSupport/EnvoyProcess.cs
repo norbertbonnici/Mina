@@ -52,11 +52,19 @@ public sealed class EnvoyProcess : IAsyncDisposable
     /// Starts Envoy and waits until its admin endpoint reports ready. <paramref name="onOutput"/>
     /// receives each stdout line as it arrives (the access log).
     /// </summary>
+    /// <param name="requireClientCertificate">
+    /// Leave true. Setting it false rewrites <c>require_client_certificate</c> to <c>false</c> in
+    /// the copy of the committed config this process runs, which exists for exactly one purpose: a
+    /// meta-test proving the client-authentication test would notice if that line were removed from
+    /// the real file. It is a named switch rather than a general config-transform hook so the only
+    /// property it can weaken is the one the meta-test is about.
+    /// </param>
     public static async Task<EnvoyProcess> StartAsync(
         string envoyBinary,
         CertificateAuthority authority,
         string serverName,
         Action<string>? onOutput = null,
+        bool requireClientCertificate = true,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(authority);
@@ -92,7 +100,14 @@ public sealed class EnvoyProcess : IAsyncDisposable
             // test's target server has nowhere else to live. Narrowing the prefix rather than
             // removing the rule keeps the filter, and every other range, exactly as shipped — so a
             // test can still prove that a CONNECT to 169.254.169.254 is refused.
-            .Replace("prefix: \"127.\"", "prefix: \"127.128.\"", StringComparison.Ordinal));
+            .Replace("prefix: \"127.\"", "prefix: \"127.128.\"", StringComparison.Ordinal)
+            // Rewriting the value, not deleting the line: dropping the line leaves its indentation
+            // glued to the next key and Envoy refuses the file as malformed YAML, which would make
+            // the meta-test pass for the wrong reason.
+            .Replace(
+                "require_client_certificate: true",
+                $"require_client_certificate: {(requireClientCertificate ? "true" : "false")}",
+                StringComparison.Ordinal));
 
         var startInfo = new ProcessStartInfo(envoyBinary)
         {

@@ -12,6 +12,7 @@ using Mina.ControlPlane.Api.Configuration;
 using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Api.Sessions;
 using Mina.ControlPlane.Application.Audit;
+using Mina.ControlPlane.Application.Configuration;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Application.Telemetry;
@@ -30,7 +31,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Operational telemetry to SigNoz. The scrub processors are part of this wiring, not optional.
 builder.Services.AddMinaObservability(builder.Configuration);
 
-builder.Services.Configure<SessionServiceOptions>(builder.Configuration.GetSection("Mina:Session"));
+// Bound and validated at startup: a bad policy value must stop the host, not surface later as a
+// database error or as a workflow that silently refuses everything.
+builder.Services.AddValidatedMinaOptions(builder.Configuration);
 builder.Services.Configure<MinaRegionOptions>(builder.Configuration.GetSection(MinaRegionOptions.Section));
 builder.Services.Configure<MinaEgressOptions>(builder.Configuration.GetSection(MinaEgressOptions.Section));
 
@@ -97,8 +100,7 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddScoped<SessionService>();
 
-// Sensitive-session (suppression) workflow — ADR-0003.
-builder.Services.Configure<SensitiveSessionOptions>(builder.Configuration.GetSection("Mina:SensitiveSession"));
+// Sensitive-session (suppression) workflow — ADR-0003. Options bound above.
 builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();
 builder.Services.AddHostedService<SensitiveSessionExpiryService>();
@@ -109,7 +111,6 @@ builder.Services.AddScoped<TelemetryIngestService>();
 builder.Services.AddScoped<NodeDirectoryService>();
 
 // Audit chain: durable, append-only, hash-linked, and periodically anchored to write-once storage.
-builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.Section));
 builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddScoped<AuditChainVerifier>();
 builder.Services.AddScoped<AuditAnchorVerifier>();

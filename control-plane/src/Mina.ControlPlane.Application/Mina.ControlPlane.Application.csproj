@@ -7,6 +7,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.11" />
+    <!-- Binds and validates options here rather than in each host, so the API and the
+         management UI cannot disagree about what a valid security policy is. -->
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.11" />
   </ItemGroup>
 
   <PropertyGroup>

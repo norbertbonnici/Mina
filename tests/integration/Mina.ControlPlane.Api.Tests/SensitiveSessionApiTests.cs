@@ -201,7 +201,11 @@ public sealed class SensitiveSessionApiTests(MinaApiFactory factory) : IClassFix
         var allowed = await Approver().GetAsync(new Uri("/api/sensitive-requests/pending", UriKind.Relative));
         allowed.EnsureSuccessStatusCode();
         var queue = JsonDocument.Parse(await allowed.Content.ReadAsStringAsync()).RootElement;
-        Assert.NotEqual(0, queue.GetArrayLength());
+        Assert.NotEqual(0, queue.GetProperty("requests").GetArrayLength());
+
+        // The queue is a bounded read, so the response has to say whether it is the whole queue.
+        // A bare array cannot, and a client would present a truncated page as everything waiting.
+        Assert.False(queue.GetProperty("hasMore").GetBoolean());
     }
 
     [Fact]

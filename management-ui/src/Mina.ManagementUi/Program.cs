@@ -11,6 +11,7 @@
 
 using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.Audit;
+using Mina.ControlPlane.Application.Configuration;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain;
@@ -29,7 +30,6 @@ builder.Services.AddManagementUi(approverRole, adminRole);
 builder.Services.AddManagementUiAuthentication(builder.Configuration, builder.Environment);
 
 builder.Services.Configure<MinaUiRegionOptions>(builder.Configuration.GetSection("Mina:Regions"));
-builder.Services.Configure<SensitiveSessionOptions>(builder.Configuration.GetSection("Mina:SensitiveSession"));
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(sp =>
@@ -59,7 +59,7 @@ else
 // Decisions taken here are approvals: they must reach the audit chain exactly as they do over the
 // API. Using a null sink meant every approval made in this UI — the way approvals are actually
 // made — went unrecorded, which ADR-0003 does not permit.
-builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.Section));
+builder.Services.AddValidatedMinaOptions(builder.Configuration);
 builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();

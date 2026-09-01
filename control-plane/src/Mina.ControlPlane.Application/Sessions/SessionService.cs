@@ -9,6 +9,8 @@ namespace Mina.ControlPlane.Application.Sessions;
 /// <summary>Options governing session issuance.</summary>
 public sealed class SessionServiceOptions
 {
+    public const string Section = "Mina:Session";
+
     /// <summary>App role a caller must hold to open a research session.</summary>
     public string AnalystRole { get; set; } = "Mina.Analyst";
 

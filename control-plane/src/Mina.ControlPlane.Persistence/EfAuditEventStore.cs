@@ -28,9 +28,24 @@ public sealed class EfAuditEventStore(MinaDbContext context) : IAuditEventStore
         }
         catch (DbUpdateException ex)
         {
-            // The unique sequence index rejected it: another writer took this position. Detach so
-            // the context is reusable, and let the caller re-read the tip and try again.
+            // Detach either way, so the context is reusable: an audit failure must not leave a
+            // half-applied event tracked for the next SaveChanges to pick up.
             _context.Entry(auditEvent).State = EntityState.Detached;
+
+            var taken = await AuditConflictClassifier
+                .IsSequenceTakenAsync(_context, auditEvent.Sequence, cancellationToken).ConfigureAwait(false);
+
+            if (!taken)
+            {
+                // A real database fault. Reporting it as a sequence conflict would send it round
+                // the writer's retry loop — five attempts against a database that is not going to
+                // recover — and then name the wrong cause in the failure the caller sees. The
+                // action still does not proceed: the caller treats any append failure as fatal.
+                throw;
+            }
+
+            // The unique sequence index rejected it: another writer took this position. Let the
+            // caller re-read the tip and try again.
             throw new AuditSequenceConflictException("The audit sequence was taken by another writer.", ex);
         }
     }

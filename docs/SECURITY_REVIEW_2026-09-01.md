@@ -39,15 +39,35 @@ against the code; the remainder are listed below as unverified.
 Also corrected in this pass: the test CA fixture was anchored one day before "now", so tests driving
 fixed clocks began failing purely because the calendar advanced. Widened.
 
+## Fixed in the fourth pass
+
+Investigating the remainder turned up two defects the review had not found, both of the same shape:
+appending an audit event flushes the shared `DbContext`, so the *order* of a mutation, its audit
+write and the commit decides whether a failure can leave them apart.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 17 | high | **The expiry path could record an approval as ended while its session stayed live and suppressed.** The audit write flushed the unit of work, committing the expiry, and left the session revoke for a second commit. If that commit failed, the approval was `Ended` — and the due query filters on `Approved`/`ActiveSuppressed`, so no later sweep could ever pick it up again. A permanent D-06 and AC-011 breach, with a `sensitive_expired` event asserting a termination that never happened. The second-pass "one commit" fix (#10) did not close this, and its comment claimed it had. | The revoke is sequenced **before** the audit write, so the event and both state changes are one transaction. Proven with a command interceptor that fails `UPDATE Sessions`: the test fails against the old ordering with `request=Ended, session=Active`. |
+| 18 | high | **A suppression mismatch could be stored without its audit event.** `AggregateSuppressedAsync` committed the traffic summary and only then wrote the critical threat-N5 event, so a failing audit write lost the detection while keeping the data — a governance action proceeding unlogged, which line 56 of this document claimed was impossible. | Audit first, then store. The test fails against the old ordering. |
+| 19 | medium | `EfAuditEventStore` relabelled every `DbUpdateException` as a sequence conflict, so a hard database fault was retried five times and reported as contention. | Classified by asking the database the actual question — is a row with that sequence now present? — rather than matching provider error numbers, which would have required this project to reference both drivers and would still be guessing which constraint fired. `AuditWriter` now surfaces every non-contention failure as one `AuditWriteException`. |
+| 20 | medium | **No options validation anywhere in the solution** — not one use of `ValidateOnStart`. A suppression window of 24 hours or more failed at the database when an analyst first used it; a window of zero silently refused every request, disabling an approved governance workflow with no error. | `AddValidatedMinaOptions` binds and validates the shared options at startup, in the Application project so the API and the management UI cannot drift. Also bounds `LeaseTtl` (which is the session certificate's lifetime) and rejects an approver role equal to the analyst role. |
+| 21 | low | The 403/404 existence oracle, contradicting the service's own comment. Wider than recorded: the same shape sat on `activate` and `cancel`, and `cancel` checked state before ownership, so a non-requester could tell a decided request from an undecided one by the 409. | A non-owner and a missing id now answer identically — same status, same empty body, same content type — on all four routes. The internal denial reasons stay distinct, so the audit trail still records `NotSessionOwner`. `CancelAsync` checks ownership before state, matching `ActivateAsync`. |
+| 22 | low | The approver queue and the expiry sweep were unbounded reads, the only queries whose size an ordinary user controls; the overview screen materialised every pending request to display a count. | Both bounded. The queue reads one more row than the page and reports `hasMore` in the API and as a banner on the approvals screen — a silent cap would let a flood push a genuine request out of an approver's sight, trading a memory defect for an approval-integrity one. The count is now a `COUNT(*)`. |
+
+**Test gaps closed.** A real Envoy now proves an uncertificated client cannot tunnel through the
+committed config, paired with a meta-test that rewrites `require_client_certificate` to `false` and
+asserts the probe *does* get through — so the guard cannot silently stop guarding. The assertion is
+that no tunnel is established, not that a particular exception is thrown: under TLS 1.3 the server
+finishes the handshake before judging the client, so the refusal arrives on the first read.
+`AuditGatesGovernanceActionsTests` proves the fail-closed property by making the audit insert fail
+at the database.
+
 ## Confirmed but not yet fixed
 
 - **medium — device compliance is inferred from the presence of a `deviceid` claim**, which
-  indicates Entra registration, not Intune compliance, while ARCHITECTURE §4 says the control plane
-  validates compliance. Either check a real compliance signal or correct the document.
-- **medium — `EfAuditEventStore` maps every `DbUpdateException` to a sequence conflict**, so a
-  genuine database error becomes a silent retry.
-- **low — session ownership returns 403 for another user's session and 404 for a missing one**,
-  creating the existence oracle the code's own comment says it avoids.
+  indicates Entra registration, not Intune compliance. **Left for the owner** — see the decisions
+  below. Correcting the document and tightening the check are both posture choices, and this
+  repository has already set the precedent that a correction of this shape is the owner's call.
 
 All remaining findings have now been verified: 26 were put to an independent skeptic reading the
 code as it stands after the fixes above; 14 survived and 12 were refuted. After merging duplicates,
@@ -102,19 +122,57 @@ suppression to engage without a distinct approver, and no governance action that
 
 ### Fix when convenient
 
-- **`EfAuditEventStore` relabels every `DbUpdateException` as a sequence conflict**, retrying a hard
-  database fault five times and reporting the wrong cause. Fail-closed, so diagnostics only.
-- **403/404 existence oracle** on session endpoints, contradicting the service's own comment. Ids are
-  unguessable and probing is audited; a one-line consistency fix.
+All five items in this section were closed in the fourth pass, except the two that are decisions:
+
 - **Expiry of a never-activated approval revokes the analyst's live, never-suppressed session.**
   Errs fail-closed, but teaches analysts to avoid the approved workflow. Gating the revoke on
-  `request.ActivatedAt is not null` would fix it — deliberately *not* done here, because D-06 was
-  decided by the project owner as "expiry terminates the session" and narrowing it is a change to
-  that decision, not a bug fix. Raise it as a D-06 amendment or leave it as is.
-- **Undecided requests never lapse and the approver queue has no limit** — the only unbounded query
-  in the codebase.
-- **`MaxDuration` is unvalidated** and `RequestedDuration` is a SQL `time` column, so a configured
-  window of 24 hours or more fails at the database rather than at startup.
+  `request.ActivatedAt is not null` would fix it — deliberately *not* done, because D-06 was decided
+  by the project owner as "expiry terminates the session" and narrowing it is a change to that
+  decision, not a bug fix. Raise it as a D-06 amendment or leave it as is.
+- **Undecided requests never lapse.** The queue is now bounded, which was the defect; whether a
+  request should *lapse* is a workflow policy with no security consequence — per ADR-0003 the TTL
+  anchors at approval, so a stale request approved later still gets a full fresh window, and a
+  request whose session has ended cannot be activated at all. Left for the owner.
+
+### Corrections to this document
+
+Two claims made above were wrong when written and are corrected here rather than quietly edited:
+
+- "no governance action that proceeds unlogged" (the summary above) was **false** for the
+  suppression-mismatch path until finding #18 was fixed. It is now true and, for the first time,
+  tested.
+- "probing is audited", given as the reason the existence oracle was only low severity, was true
+  only of hits. A lookup *miss* is still recorded nowhere — see the decision below.
+
+## Surfaced, not resolved: the session allowlist is not enforced at the node
+
+Found while building the client-authentication test, and left exactly as it is because CLAUDE.md
+requires a code-versus-documentation conflict to be surfaced rather than settled.
+
+`egress-node/envoy/envoy-bootstrap.yaml` admits **any unexpired certificate that chains to the
+internal CA**. It has no per-session check of any kind. The node sidecar does pull a session
+allowlist, but uses it only to decide whether to withhold destinations for a suppressed session —
+never to admit or refuse a tunnel.
+
+Three documents say otherwise:
+
+| Document | Claim |
+|---|---|
+| `docs/ARCHITECTURE.md` (failure modes) | "Open proxy \| Envoy requires platform mTLS **+ live session**" |
+| `docs/ARCHITECTURE.md` (failure modes) | "Session revoked/expired \| … **node drops the allowlist entry ⇒ tunnel refused**" |
+| `docs/THREAT_MODEL.md` (B-series) | "Egress node becomes open proxy \| mTLS **+ session allowlist**" |
+
+The consequence is about revocation latency, not open-proxy exposure: an unauthenticated scanner
+still gets nothing (now proven against a real Envoy). But revoking a session today means *declining
+to renew* it, so the already-issued certificate keeps working until it expires — up to the lease
+TTL, about 60 minutes. `docs/ARCHITECTURE.md` §4 describes revocation as "effective in seconds via
+the push channel, ≤30 s via pull", and `docs/BACKLOG.md` M2-3 records push-based fast revocation as
+outstanding while saying "the pull interval bounds the window today". For admission it does not: the
+certificate TTL does.
+
+Either the node must enforce the allowlist (Envoy-side session checking, which is real work and
+needs a design), or the three documents must describe the certificate TTL as the revocation bound.
+That is a decision for the project owner.
 
 ## Deliberate residual risk
 

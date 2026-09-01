@@ -108,6 +108,15 @@ public sealed class AuditWriter(IAuditEventStore store, IOptions<AuditOptions> o
 
                 // Another writer took this position; re-read the tip and chain onto the new one.
             }
+            catch (Exception ex) when (ex is not (AuditWriteException or OperationCanceledException))
+            {
+                // Anything that is not contention is a real failure of the store, and retrying it
+                // would only delay the refusal. Surfacing every such failure as one type is what
+                // lets callers — and the tests that prove "no action proceeds unlogged" — treat
+                // "the event was not recorded" as a single condition.
+                throw new AuditWriteException(
+                    $"Could not append '{draft.EventType}' to the audit chain.", ex);
+            }
         }
 
         throw new AuditWriteException($"Could not append '{draft.EventType}' to the audit chain.");

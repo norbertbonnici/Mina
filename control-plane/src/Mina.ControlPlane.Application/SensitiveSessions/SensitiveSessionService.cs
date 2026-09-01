@@ -6,9 +6,17 @@ using Mina.ControlPlane.Domain.Sessions;
 
 namespace Mina.ControlPlane.Application.SensitiveSessions;
 
+/// <summary>
+/// A page of the approver queue. <paramref name="HasMore"/> exists so a flood cannot quietly push a
+/// genuine request off the end of what an approver is shown.
+/// </summary>
+public sealed record PendingApprovals(IReadOnlyList<SensitiveSessionView> Requests, bool HasMore);
+
 /// <summary>Policy for the sensitive-session workflow.</summary>
 public sealed class SensitiveSessionOptions
 {
+    public const string Section = "Mina:SensitiveSession";
+
     /// <summary>App role required to decide a request. Deliberately not the analyst role.</summary>
     public string ApproverRole { get; set; } = "Mina.Approver";
 
@@ -17,6 +25,20 @@ public sealed class SensitiveSessionOptions
 
     /// <summary>Longest suppression window an approver may grant.</summary>
     public TimeSpan MaxDuration { get; set; } = TimeSpan.FromHours(4);
+
+    /// <summary>
+    /// How many pending requests the approver queue returns at once. Provisional: it bounds a query
+    /// an analyst can lengthen at will, and the value has not been ratified as policy. Truncation is
+    /// always reported, so raising or lowering it changes how much an approver sees per page, never
+    /// whether they are told there is more.
+    /// </summary>
+    public int ApproverQueuePageSize { get; set; } = 100;
+
+    /// <summary>
+    /// How many elapsed approvals one expiry sweep handles. The sweep repeats every 30 seconds and
+    /// each expiry is independent, so a backlog drains over several passes instead of in one read.
+    /// </summary>
+    public int ExpirySweepBatchSize { get; set; } = 200;
 }
 
 /// <summary>
@@ -121,6 +143,15 @@ public sealed class SensitiveSessionService(
         ArgumentNullException.ThrowIfNull(principal);
 
         var request = await RequireRequestAsync(requestId, cancellationToken).ConfigureAwait(false);
+
+        // Ownership before state, matching ActivateAsync. The aggregate checks state first, so
+        // asking it directly would answer a non-requester with a 409 for a decided request and a
+        // 403 for an undecided one — the same oracle, one level down.
+        if (!request.IsRequester(principal.UserObjectId))
+        {
+            throw new SensitiveSessionAuthorizationException(SensitiveSessionDenialReason.NotRequester);
+        }
+
         request.Cancel(principal.UserObjectId, _clock.GetUtcNow());
 
         await _audit.CancelledAsync(request, cancellationToken).ConfigureAwait(false);
@@ -164,15 +195,25 @@ public sealed class SensitiveSessionService(
         return SensitiveSessionView.From(request);
     }
 
-    /// <summary>The approver queue.</summary>
-    public async Task<IReadOnlyList<SensitiveSessionView>> ListPendingAsync(
+    /// <summary>The approver queue, bounded, and honest about being bounded.</summary>
+    public async Task<PendingApprovals> ListPendingAsync(
         SessionPrincipal principal, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(principal);
         RequireRole(principal, _options.ApproverRole);
 
-        var pending = await _requests.ListPendingAsync(cancellationToken).ConfigureAwait(false);
-        return [.. pending.Select(SensitiveSessionView.From)];
+        var page = await _requests
+            .ListPendingAsync(_options.ApproverQueuePageSize, cancellationToken).ConfigureAwait(false);
+
+        return new PendingApprovals([.. page.Requests.Select(SensitiveSessionView.From)], page.HasMore);
+    }
+
+    /// <summary>How many requests are waiting, for a dashboard that needs the number and not the rows.</summary>
+    public async Task<int> CountPendingAsync(SessionPrincipal principal, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        RequireRole(principal, _options.ApproverRole);
+        return await _requests.CountPendingAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>One request, visible to its requester or to an approver.</summary>
@@ -191,11 +232,6 @@ public sealed class SensitiveSessionService(
     }
 
     /// <summary>
-    /// Expires every approval whose window has elapsed and terminates the session it belonged to
-    /// (D-06). Runs on a timer so an approval cannot outlive its TTL even if nothing else happens;
-    /// returns how many were expired.
-    /// </summary>
-    /// <summary>
     /// Ids of approvals whose window has elapsed. Split from <see cref="ExpireAsync"/> so the caller
     /// can expire each one in its own unit of work: a single unit of work cannot isolate failures,
     /// because a rejected commit leaves the failed change tracked and every later commit in that
@@ -203,7 +239,9 @@ public sealed class SensitiveSessionService(
     /// </summary>
     public async Task<IReadOnlyList<Guid>> ListDueForExpiryAsync(CancellationToken cancellationToken)
     {
-        var due = await _requests.ListExpiredAsync(_clock.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        var due = await _requests
+            .ListExpiredAsync(_clock.GetUtcNow(), _options.ExpirySweepBatchSize, cancellationToken)
+            .ConfigureAwait(false);
         return [.. due.Select(r => r.Id)];
     }
 
@@ -222,20 +260,27 @@ public sealed class SensitiveSessionService(
         }
 
         // D-06: expiry terminates the session rather than silently resuming URL logging on a
-        // continuation of the same activity. Whether it will be terminated is decided before the
-        // event is written, so the event is accurate and still precedes the change it describes.
+        // continuation of the same activity.
         var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
         var terminating = session is not null && session.State == SessionState.Active;
 
-        await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
-
+        // Revoke BEFORE the audit write, not after. Both mutations are already tracked by the time
+        // the audit event is appended, and appending flushes the whole unit of work — so writing the
+        // event first committed the expiry (TryExpire, above) while leaving the revoke for a second
+        // commit that could fail. That left an approval recorded as Ended with its session still
+        // live and still suppressed, past the window an approver granted, and the due-request query
+        // filters on Approved/ActiveSuppressed so no later sweep would ever pick it up again: a
+        // permanent D-06 and AC-011 breach, with an audit event asserting a termination that never
+        // happened. Ordering it this way makes the event and both state changes one transaction.
         if (terminating)
         {
             session!.Revoke(now, "sensitive-session-expiry");
         }
 
-        // One commit, so an approval can never be recorded as expired while the session it was
-        // granted for is still live and still suppressed (D-06).
+        await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
+
+        // Commits anything the audit append did not already flush; with the EF wiring this is a
+        // no-op, and with a store that does not share the context it is the commit that counts.
         await _unitOfWork.CommitAsync(cancellationToken).ConfigureAwait(false);
         return true;
     }

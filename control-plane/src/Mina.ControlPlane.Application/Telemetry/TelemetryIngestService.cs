@@ -119,13 +119,19 @@ public sealed class TelemetryIngestService(
             group.Count,
             group.Sum(item => item.BytesUp + item.BytesDown));
 
-        await _telemetry.AddSuppressedSummaryAsync(summary, cancellationToken).ConfigureAwait(false);
-
+        // Audit first. A node still sending destinations for a suppressed session is threat N5 —
+        // the node is collecting what it was told to stop collecting — and the event is the only
+        // record that it happened, since the hostnames themselves are discarded. Storing the
+        // summary first meant the summary was committed and, if the audit write then failed, the
+        // detection was simply lost: an action proceeding unlogged, which is the one thing the
+        // audit ordering exists to prevent.
         if (mismatched > 0)
         {
             await _audit.SuppressionMismatchAsync(sessionId, region, mismatched, cancellationToken)
                 .ConfigureAwait(false);
         }
+
+        await _telemetry.AddSuppressedSummaryAsync(summary, cancellationToken).ConfigureAwait(false);
 
         return (group.Count, mismatched);
     }

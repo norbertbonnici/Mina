@@ -169,7 +169,7 @@ public class SensitiveSessionServiceTests
 
         var pending = await h.Service.ListPendingAsync(h.Approver, default);
 
-        Assert.Equal([second.RequestId], pending.Select(p => p.RequestId));
+        Assert.Equal([second.RequestId], pending.Requests.Select(p => p.RequestId));
         await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
             () => h.Service.ListPendingAsync(h.Analyst, default));
     }
@@ -227,8 +227,17 @@ public class SensitiveSessionServiceTests
         var request = await h.RequestAsync();
         var other = h.Analyst with { UserObjectId = "oid-other" };
 
-        await Assert.ThrowsAsync<SensitiveSessionRuleViolationException>(
+        // Ownership is checked before state, so a non-requester gets the same refusal whatever
+        // state the request is in — and the same one they get for a request id that does not
+        // exist. Refusing on state first would answer "409, already decided" for a decided request
+        // and "403" for an undecided one, which tells a stranger about a request they cannot see.
+        var denied = await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
             () => h.Service.CancelAsync(other, request.RequestId, default));
+        Assert.Equal(SensitiveSessionDenialReason.NotRequester, denied.Reason);
+
+        var invented = await Assert.ThrowsAsync<SensitiveSessionAuthorizationException>(
+            () => h.Service.CancelAsync(other, Guid.NewGuid(), default));
+        Assert.Equal(SensitiveSessionDenialReason.RequestNotFound, invented.Reason);
 
         var cancelled = await h.Service.CancelAsync(h.Analyst, request.RequestId, default);
         Assert.Equal(SensitiveSessionState.Cancelled, cancelled.State);
@@ -346,9 +355,21 @@ public class SensitiveSessionServiceTests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<SensitiveSessionRequest>> ListPendingAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<SensitiveSessionRequest>>(
-                [.. _store.Values.Where(r => r.State == SensitiveSessionState.Requested).OrderBy(r => r.RequestedAt)]);
+        public Task<PendingRequestPage> ListPendingAsync(int limit, CancellationToken cancellationToken)
+        {
+            var page = _store.Values
+                .Where(r => r.State == SensitiveSessionState.Requested)
+                .OrderBy(r => r.RequestedAt)
+                .Take(limit + 1)
+                .ToList();
+
+            return Task.FromResult(page.Count > limit
+                ? new PendingRequestPage(page.Take(limit).ToList(), HasMore: true)
+                : new PendingRequestPage(page, HasMore: false));
+        }
+
+        public Task<int> CountPendingAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(_store.Values.Count(r => r.State == SensitiveSessionState.Requested));
 
         public Task<IReadOnlyList<SensitiveSessionRequest>> ListForSessionAsync(
             Guid sessionId, CancellationToken cancellationToken) =>
@@ -356,10 +377,12 @@ public class SensitiveSessionServiceTests
                 [.. _store.Values.Where(r => r.SessionId == sessionId)]);
 
         public Task<IReadOnlyList<SensitiveSessionRequest>> ListExpiredAsync(
-            DateTimeOffset asOf, CancellationToken cancellationToken) =>
+            DateTimeOffset asOf, int limit, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SensitiveSessionRequest>>(
-                [.. _store.Values.Where(r =>
-                    r.State is SensitiveSessionState.Approved or SensitiveSessionState.ActiveSuppressed
-                    && r.ExpiresAt is not null && r.ExpiresAt <= asOf)]);
+                [.. _store.Values
+                    .Where(r => r.State is SensitiveSessionState.Approved or SensitiveSessionState.ActiveSuppressed
+                                && r.ExpiresAt is not null && r.ExpiresAt <= asOf)
+                    .OrderBy(r => r.ExpiresAt)
+                    .Take(limit)]);
     }
 }
