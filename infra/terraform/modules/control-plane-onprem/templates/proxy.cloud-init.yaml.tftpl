@@ -1,0 +1,96 @@
+#cloud-config
+# Mina control plane — publishing reverse proxy (ADR-0006 constraint 1).
+#
+# This host exists to publish ONE thing: the node-facing listener, so the Azure egress nodes can
+# reach the control plane without any route into corporate networks. There is deliberately no
+# server block for the management listener. That is the point of putting the proxy on its own host —
+# a configuration mistake here cannot expose the approvals UI or the audit read API, because the
+# configuration that would expose them does not exist on this machine.
+
+package_update: true
+packages:
+  - nginx
+  - nftables
+
+users:
+  - default
+  - name: mina-admin
+    groups: [sudo]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+%{ for key in ssh_keys ~}
+      - ${key}
+%{ endfor ~}
+
+write_files:
+  - path: /etc/nginx/sites-available/mina-node
+    permissions: "0644"
+    content: |
+      # The published endpoint. TLS is terminated here with a public-CA certificate (ADR-0006
+      # constraint 3) — issue it with certbot or install your own before enabling this site.
+      server {
+          listen 443 ssl;
+          listen [::]:443 ssl;
+          http2 on;
+          server_name ${public_hostname};
+
+          ssl_certificate     /etc/mina/tls/fullchain.pem;
+          ssl_certificate_key /etc/mina/tls/privkey.pem;
+          ssl_protocols       TLSv1.2 TLSv1.3;
+
+          # Only the node API is proxied. Any other path is refused here as well as by the
+          # application's own listener separation; the two are redundant on purpose.
+          location /api/nodes/ {
+              proxy_pass http://${app_ip}:${node_port};
+              proxy_set_header Host              $host;
+              proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_read_timeout 60s;
+          }
+
+          location = /healthz {
+              proxy_pass http://${app_ip}:${node_port};
+              proxy_set_header Host $host;
+          }
+
+          location / {
+              return 404;
+          }
+      }
+
+      server {
+          listen 80;
+          listen [::]:80;
+          server_name ${public_hostname};
+          return 301 https://$host$request_uri;
+      }
+
+  - path: /etc/nftables.conf
+    permissions: "0644"
+    content: |
+      #!/usr/sbin/nft -f
+      flush ruleset
+      table inet filter {
+        chain input {
+          type filter hook input priority 0; policy drop;
+          ct state established,related accept
+          iif lo accept
+          # Published to the internet: this is the one host that accepts from anywhere.
+          tcp dport { 80, 443 } accept
+          # Administration from corporate ranges only.
+%{ for cidr in corp_cidrs ~}
+          ip saddr ${cidr} tcp dport 22 accept
+%{ endfor ~}
+        }
+        chain forward { type filter hook forward priority 0; policy drop; }
+      }
+
+runcmd:
+  - [ install, -d, -m, "0750", -o, root, -g, root, /etc/mina/tls ]
+  - [ rm, -f, /etc/nginx/sites-enabled/default ]
+  - [ ln, -sf, /etc/nginx/sites-available/mina-node, /etc/nginx/sites-enabled/mina-node ]
+  - [ systemctl, enable, --now, nftables ]
+  # nginx is intentionally NOT started here: it would fail without a certificate, and a proxy that
+  # restart-loops is harder to diagnose than one that is plainly not started yet. Install the
+  # certificate into /etc/mina/tls, then: nginx -t && systemctl enable --now nginx
