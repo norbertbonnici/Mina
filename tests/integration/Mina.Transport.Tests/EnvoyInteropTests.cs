@@ -52,7 +52,7 @@ public sealed class EnvoyInteropTests
 
         // Hostname telemetry (ADR-0002 Option 1) is emitted by Envoy without TLS interception.
         var authority = $"127.0.0.1:{target.Port}";
-        var logged = await WaitForLogLineAsync(envoy.OutputPath, authority);
+        var logged = await WaitForLogLineAsync(envoy.AccessLogPath, authority);
         Assert.Contains("mina.hostname.v1", logged, StringComparison.Ordinal);
         Assert.Contains(authority, logged, StringComparison.Ordinal);
     }

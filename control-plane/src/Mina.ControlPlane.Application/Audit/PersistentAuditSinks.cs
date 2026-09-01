@@ -139,6 +139,18 @@ public sealed class PersistentTelemetryAuditSink(AuditWriter writer) : ITelemetr
             SessionId: sessionId,
             Data: new { discarded_items = itemCount }), cancellationToken);
 
+    public Task RegionMismatchAsync(
+        Guid sessionId, string claimedRegion, string sessionRegion, int itemCount,
+        CancellationToken cancellationToken) =>
+        _writer.WriteAsync(new AuditEventDraft(
+            "telemetry_region_mismatch",
+            AuditSeverity.High,
+            AuditComponent.EgressNode,
+            Region: claimedRegion,
+            SessionId: sessionId,
+            Data: new { claimed_region = claimedRegion, session_region = sessionRegion, discarded_items = itemCount }),
+            cancellationToken);
+
     public Task UnattributableTelemetryAsync(
         Guid sessionId, string region, int itemCount, CancellationToken cancellationToken) =>
         _writer.WriteAsync(new AuditEventDraft(

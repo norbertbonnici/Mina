@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.Sessions;
+using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 
@@ -28,12 +29,14 @@ public sealed class SensitiveSessionService(
     ISensitiveSessionRepository requests,
     ISessionRepository sessions,
     ISensitiveSessionAuditSink audit,
+    IUnitOfWork unitOfWork,
     IOptions<SensitiveSessionOptions> options,
     TimeProvider clock)
 {
     private readonly ISensitiveSessionRepository _requests = requests ?? throw new ArgumentNullException(nameof(requests));
     private readonly ISessionRepository _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
     private readonly ISensitiveSessionAuditSink _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+    private readonly IUnitOfWork _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
     private readonly SensitiveSessionOptions _options =
         (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
@@ -154,8 +157,10 @@ public sealed class SensitiveSessionService(
         session.MarkSensitive();
 
         await _audit.ActivatedAsync(request, cancellationToken).ConfigureAwait(false);
-        await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
-        await _sessions.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
+
+        // One commit: a half-applied activation would leave the request suppressed while the session
+        // it names carried on in normal mode, or the reverse.
+        await _unitOfWork.CommitAsync(cancellationToken).ConfigureAwait(false);
         return SensitiveSessionView.From(request);
     }
 
@@ -210,13 +215,15 @@ public sealed class SensitiveSessionService(
             var terminating = session is not null && session.State == SessionState.Active;
 
             await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
-            await _requests.UpdateAsync(request, cancellationToken).ConfigureAwait(false);
 
             if (terminating)
             {
                 session!.Revoke(now, "sensitive-session-expiry");
-                await _sessions.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
             }
+
+            // One commit, so an approval can never be recorded as expired while the session it was
+            // granted for is still live and still suppressed (D-06).
+            await _unitOfWork.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             expired++;
         }

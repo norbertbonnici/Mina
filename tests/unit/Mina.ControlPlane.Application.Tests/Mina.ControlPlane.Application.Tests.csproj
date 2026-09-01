@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Application\Mina.ControlPlane.Application.csproj" />
     <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Pki\Mina.ControlPlane.Pki.csproj" />
     <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Domain\Mina.ControlPlane.Domain.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Persistence\Mina.ControlPlane.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

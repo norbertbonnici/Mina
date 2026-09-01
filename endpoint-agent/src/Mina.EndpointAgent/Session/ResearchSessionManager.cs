@@ -115,8 +115,12 @@ public sealed partial class ResearchSessionManager : IAsyncDisposable
                 Log.SessionRenewed(_logger, renewed.SessionId, renewed.LeaseExpiresAt);
                 return true;
             }
-            catch (Exception ex) when (ex is ControlPlaneException or HttpRequestException)
+            catch (Exception ex) when (ex is ControlPlaneException or HttpRequestException
+                                       || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
             {
+                // A renewal that timed out is a renewal that did not happen. Treat it exactly like a
+                // refusal and drop the session, rather than letting the timeout escape and leave a
+                // session alive on a credential the control plane may have declined to extend.
                 keyMaterial.Dispose();
                 Log.RenewalFailed(_logger, current.SessionId, ex.Message);
                 Swap(null); // fail closed

@@ -53,6 +53,10 @@ write_files:
 
 runcmd:
   - [ groupadd, -f, mina-tls ]
+  # Envoy's access log is the hostname-telemetry buffer the sidecar consumes. It is a buffer, not a
+  # record: it contains destinations for suppressed sessions too, because Envoy has no per-session
+  # suppression yet (M2-3). Keep it off world-readable paths and out of the journal.
+  - [ install, -d, -m, "0750", -o, root, -g, mina-tls, /var/log/mina ]
   # TODO(M1-2): install a pinned Envoy build (checksum-verified) from the approved source, or
   #   bake it into a hardened custom image built in the pipeline. Placeholder uses func-e.
   # - curl -fsSL https://func-e.io/install.sh | bash -s -- -b /usr/local/bin && func-e use 1.39.1

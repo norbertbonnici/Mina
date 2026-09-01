@@ -4,6 +4,7 @@ using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Persistence;
 
 namespace Mina.ControlPlane.Application.Tests;
 
@@ -256,7 +257,7 @@ public class SensitiveSessionServiceTests
             Sessions.AddAsync(Session, default).GetAwaiter().GetResult();
 
             Service = new SensitiveSessionService(
-                Requests, Sessions, NullSensitiveSessionAuditSink.Instance,
+                Requests, Sessions, NullSensitiveSessionAuditSink.Instance, new InMemoryUnitOfWork(),
                 Options.Create(new SensitiveSessionOptions()), Clock);
         }
 

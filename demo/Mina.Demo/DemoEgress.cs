@@ -27,6 +27,8 @@ internal sealed class EnvoyDemoEgress : IDemoEgress
 {
     private readonly EnvoyProcess _envoy;
 
+    private readonly CancellationTokenSource _stopping = new();
+
     private EnvoyDemoEgress(EnvoyProcess envoy, string serverName)
     {
         _envoy = envoy;
@@ -44,10 +46,52 @@ internal sealed class EnvoyDemoEgress : IDemoEgress
     public static async Task<EnvoyDemoEgress> StartAsync(
         string binary, CertificateAuthority authority, string serverName, Action<string> onHostname)
     {
-        var envoy = await EnvoyProcess.StartAsync(binary, authority, serverName,
-            onOutput: line => ReportHostname(line, onHostname)).ConfigureAwait(false);
+        var envoy = await EnvoyProcess.StartAsync(binary, authority, serverName).ConfigureAwait(false);
+        var demo = new EnvoyDemoEgress(envoy, serverName);
 
-        return new EnvoyDemoEgress(envoy, serverName);
+        // Envoy writes its access log to a file — the same one the node sidecar consumes — so the
+        // demo follows that file rather than the process's stdout.
+        _ = demo.TailAccessLogAsync(onHostname);
+        return demo;
+    }
+
+    private async Task TailAccessLogAsync(Action<string> onHostname)
+    {
+        while (!_stopping.IsCancellationRequested)
+        {
+            try
+            {
+                if (!File.Exists(_envoy.AccessLogPath))
+                {
+                    await Task.Delay(250, _stopping.Token).ConfigureAwait(false);
+                    continue;
+                }
+
+                await using var stream = new FileStream(
+                    _envoy.AccessLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+
+                while (!_stopping.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(_stopping.Token).ConfigureAwait(false);
+                    if (line is null)
+                    {
+                        await Task.Delay(200, _stopping.Token).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    ReportHostname(line, onHostname);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (IOException)
+            {
+                await Task.Delay(250).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>Pulls the authority out of an access-log line, ignoring Envoy's other output.</summary>
@@ -73,7 +117,12 @@ internal sealed class EnvoyDemoEgress : IDemoEgress
         }
     }
 
-    public ValueTask DisposeAsync() => _envoy.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await _stopping.CancelAsync().ConfigureAwait(false);
+        _stopping.Dispose();
+        await _envoy.DisposeAsync().ConfigureAwait(false);
+    }
 }
 
 /// <summary>

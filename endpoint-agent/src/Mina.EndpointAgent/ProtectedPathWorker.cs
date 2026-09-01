@@ -66,8 +66,13 @@ internal sealed partial class ProtectedPathWorker(
                 await CloseProtectedPathAsync().ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (ex is ControlPlaneException or HttpRequestException)
+        catch (Exception ex) when (ex is ControlPlaneException or HttpRequestException
+                                   || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
+            // An HTTP timeout arrives as TaskCanceledException, which is an OperationCanceledException.
+            // Letting it escape broke the worker's loop outright: the path closed, correctly, but
+            // never reopened without a service restart. A timeout is transient — close the path and
+            // try again on the next tick.
             Log.SessionUnavailable(logger, ex.Message);
             await CloseProtectedPathAsync().ConfigureAwait(false);
         }

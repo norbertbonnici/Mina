@@ -46,6 +46,18 @@ public sealed class TelemetryIngestService(
                 continue;
             }
 
+            // A node may only report for sessions in the region it serves. Without this the region
+            // is just a label the caller chooses, and one node could write browsing history against
+            // another region's analysts.
+            if (!string.Equals(session.Region, batch.Region, StringComparison.OrdinalIgnoreCase))
+            {
+                unattributable += group.Count();
+                await _audit.RegionMismatchAsync(
+                    session.Id, batch.Region, session.Region, group.Count(), cancellationToken)
+                    .ConfigureAwait(false);
+                continue;
+            }
+
             if (session.Mode == SessionMode.Sensitive)
             {
                 var (count, mismatched) = await AggregateSuppressedAsync(

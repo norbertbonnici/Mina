@@ -95,7 +95,7 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
         var analyst = Client("oid-allowlist", "Mina.Analyst");
         var sessionId = await NewSessionAsync(analyst);
 
-        var response = await Client("oid-node", "Mina.Node").GetAsync(
+        var response = await Client("oid-node", "Mina.Node,Mina.Node.westeurope").GetAsync(
             new Uri("/api/nodes/westeurope/sessions", UriKind.Relative));
         response.EnsureSuccessStatusCode();
 
@@ -107,7 +107,7 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
     [Fact]
     public async Task A_node_reads_no_sessions_for_a_region_with_none()
     {
-        var response = await Client("oid-node2", "Mina.Node").GetAsync(
+        var response = await Client("oid-node2", "Mina.Node,Mina.Node.northeurope").GetAsync(
             new Uri("/api/nodes/northeurope/sessions", UriKind.Relative));
         response.EnsureSuccessStatusCode();
 
@@ -116,12 +116,43 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
     }
 
     [Fact]
+    public async Task A_node_cannot_read_the_allowlist_of_a_region_it_was_not_granted()
+    {
+        // Holding the node role says the caller is a node; it does not say which one.
+        var response = await Client("oid-node-weu", "Mina.Node,Mina.Node.westeurope").GetAsync(
+            new Uri("/api/nodes/northeurope/sessions", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_node_with_no_region_grant_is_entitled_to_nothing()
+    {
+        var response = await Client("oid-node-bare", "Mina.Node").GetAsync(
+            new Uri("/api/nodes/westeurope/sessions", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_node_cannot_post_telemetry_for_a_region_it_was_not_granted()
+    {
+        var analyst = Client("oid-crossregion", "Mina.Analyst");
+        var sessionId = await NewSessionAsync(analyst);
+
+        var response = await PostTelemetryAsync(
+            Client("oid-node-neu", "Mina.Node,Mina.Node.northeurope"), sessionId, "example.org");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Telemetry_for_a_normal_session_is_recorded()
     {
         var analyst = Client("oid-record", "Mina.Analyst");
         var sessionId = await NewSessionAsync(analyst);
 
-        var response = await PostTelemetryAsync(Client("oid-node3", "Mina.Node"), sessionId, "example.org");
+        var response = await PostTelemetryAsync(Client("oid-node3", "Mina.Node,Mina.Node.westeurope"), sessionId, "example.org");
         response.EnsureSuccessStatusCode();
 
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
@@ -134,7 +165,7 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
     {
         var analyst = Client("oid-suppressed", "Mina.Analyst");
         var approver = Client("oid-manager-t", "Mina.Approver");
-        var node = Client("oid-node4", "Mina.Node");
+        var node = Client("oid-node4", "Mina.Node,Mina.Node.westeurope");
         var sessionId = await NewSessionAsync(analyst);
 
         // Request → approve → activate, exactly as the workflow requires.
@@ -169,7 +200,7 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
     [Fact]
     public async Task Telemetry_for_an_unknown_session_is_reported_as_unattributable()
     {
-        var response = await PostTelemetryAsync(Client("oid-node5", "Mina.Node"), Guid.NewGuid(), "orphan.example");
+        var response = await PostTelemetryAsync(Client("oid-node5", "Mina.Node,Mina.Node.westeurope"), Guid.NewGuid(), "orphan.example");
         response.EnsureSuccessStatusCode();
 
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
@@ -180,7 +211,7 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
     [Fact]
     public async Task A_batch_without_a_region_is_a_bad_request()
     {
-        var response = await Client("oid-node6", "Mina.Node").PostAsJsonAsync(
+        var response = await Client("oid-node6", "Mina.Node,Mina.Node.westeurope").PostAsJsonAsync(
             new Uri("/api/nodes/telemetry", UriKind.Relative),
             new { region = "", items = Array.Empty<object>() });
 

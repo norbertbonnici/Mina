@@ -17,26 +17,16 @@ against the code; the remainder are listed below as unverified.
 | 5 | high | The scrubber missed upper-case host names (`EXAMPLE.ORG`) and IPv6 literals. | Pattern extended: the final label may be uniformly upper or lower case, and an IPv6 branch requiring at least three colon separators (so clock times and ISO timestamps are untouched). |
 | 6 | high | A client-supplied `region` reached a metric dimension and an audit field unvalidated: unbounded cardinality, a possible destination in operational telemetry, and — since audit precedes the action — a region long enough to overflow the audit payload let a caller **stop their own denial being recorded**. | `RegionName.IsWellFormed` bounds shape and length at both API boundaries before metrics or audit see the value. |
 
+## Fixed in the second pass
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 7 | high | Node identity was not bound to a region: the region came from the URL and body, the node policy was one region-agnostic role, and ingest never compared `batch.Region` to `session.Region`. Any node could read another region's allowlist and write browsing history against another region's analysts — the scoping THREAT_MODEL B4 names as the mitigation. | Nodes now carry a per-region grant (`Mina.Node.<region>` app role, assignable to a stamp's managed identity); both node endpoints refuse a region the caller was not granted, and a bare node role is entitled to nothing. Ingest rejects any item whose session belongs to a different region and raises `telemetry_region_mismatch` (high). |
+| 8 | high | The sidecar tailed `/var/log/mina/envoy-access.log` while Envoy logged to stdout, so as deployed **no hostname telemetry would ever ship**. | Envoy now writes the access log to that file. The config-validation script, the interop test and the demo were all updated to follow it. |
+| 9 | high | A control-plane HTTP timeout permanently stopped the agent's protected-path worker: the timeout arrives as `TaskCanceledException`, escaped the catch filter and broke the loop. It failed closed but never recovered without a restart. | The worker and the renewal path now treat a cancellation that is *not* the shutdown token as a transient failure: the path closes and the next tick retries; a renewal timeout drops the session, as a refusal does. |
+| 10 | high | Suppression expiry was two transactions — the approval ended and committed, then the session revoke committed separately — so a failure in between left an expired approval with a live session still suppressed, past the window an approver granted (D-06). | An explicit `IUnitOfWork` commits the approval change and the session change together; activation, which likewise touches both, uses it too. |
 ## Confirmed but not yet fixed
 
-- **high — node identity is not bound to a region.** `NodeEndpoints` takes the region from the URL
-  and body; the node policy is a single region-agnostic role; ingest never compares `batch.Region`
-  to `session.Region`. Any node can read another region's allowlist and post telemetry against
-  another region's sessions. THREAT_MODEL B4 names this control ("API scopes the node identity to
-  its own region's allowlist") and it is not implemented.
-- **high — the sidecar tails a file Envoy never writes.** Envoy is configured with
-  `StdoutAccessLog`; the sidecar reads `/var/log/mina/envoy-access.log`; nothing connects them. As
-  deployed, no hostname telemetry would ship at all.
-- **high — suppressed sessions' hostnames remain in Envoy's own access log** on the node.
-  LOGGING_AND_PRIVACY §4 says the egress node stops recording hostnames for a suppressed session; on
-  the node itself it does not. Either apply suppression at Envoy or state plainly that the node log
-  is short-lived, access-controlled, and not the telemetry of record.
-- **high — a control-plane HTTP timeout permanently stops the agent's protected-path worker.** An
-  HTTP timeout surfaces as `TaskCanceledException`, which escapes the worker's catch filter and
-  breaks its loop. It fails closed, but never recovers without a service restart.
-- **high — suppression expiry is two transactions.** The request is marked ended and committed, then
-  the session revoke commits separately; a failure between them leaves an expired approval with a
-  live session still in sensitive mode, past the approved window (contrary to D-06).
 - **medium — device compliance is inferred from the presence of a `deviceid` claim**, which
   indicates Entra registration, not Intune compliance, while ARCHITECTURE §4 says the control plane
   validates compliance. Either check a real compliance signal or correct the document.
@@ -50,6 +40,17 @@ against the code; the remainder are listed below as unverified.
   creating the existence oracle the code's own comment says it avoids.
 
 Roughly thirty lower-ranked findings from the same review remain unverified.
+
+## Deliberate residual risk
+
+**Suppressed sessions' destinations still appear in Envoy's own access log on the node.** Envoy has
+no per-session suppression (that is M2-3), so it logs every CONNECT authority; suppression is
+applied by the sidecar before anything leaves the node and enforced again by the control plane.
+The log is therefore a **short-lived buffer, not the telemetry of record** — mode 0750 directory,
+consumed continuously by the sidecar. This does not match LOGGING_AND_PRIVACY §4 as written, which
+says the node stops recording hostnames for a suppressed session. Eliminating it needs suppression
+at Envoy itself; until then the document should be corrected to describe what actually happens, and
+that correction is a decision for the project owner rather than something to change silently.
 
 ## Test gaps worth closing
 

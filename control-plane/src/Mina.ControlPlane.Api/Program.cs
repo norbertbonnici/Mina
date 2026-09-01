@@ -15,6 +15,7 @@ using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Application.Telemetry;
+using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
@@ -61,6 +62,7 @@ if (usingInMemoryStore)
     builder.Services.AddSingleton<ISensitiveSessionRepository, InMemorySensitiveSessionRepository>();
     builder.Services.AddSingleton<ITelemetryRepository, InMemoryTelemetryRepository>();
     builder.Services.AddSingleton<InMemoryAuditEventStore>();
+    builder.Services.AddSingleton<IUnitOfWork, InMemoryUnitOfWork>();
     builder.Services.AddSingleton<IAuditEventStore>(sp => new LoggingAuditEventStore(
         sp.GetRequiredService<InMemoryAuditEventStore>(),
         sp.GetRequiredService<ILogger<LoggingAuditEventStore>>()));

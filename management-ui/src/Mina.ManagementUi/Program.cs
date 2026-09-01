@@ -13,6 +13,7 @@ using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Domain.Regions;
+using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.Audit;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
@@ -46,6 +47,7 @@ if (usingInMemoryStore)
     builder.Services.AddSingleton<ISessionRepository>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISessionQueries>(sp => sp.GetRequiredService<InMemorySessionRepository>());
     builder.Services.AddSingleton<ISensitiveSessionRepository, InMemorySensitiveSessionRepository>();
+    builder.Services.AddSingleton<IUnitOfWork, InMemoryUnitOfWork>();
     builder.Services.AddSingleton<IAuditEventStore, InMemoryAuditEventStore>();
 }
 else

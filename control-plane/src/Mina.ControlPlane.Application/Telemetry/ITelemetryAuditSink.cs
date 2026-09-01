@@ -14,6 +14,16 @@ public interface ITelemetryAuditSink
     /// <summary>Telemetry arrived that cannot be attributed to a known session.</summary>
     Task UnattributableTelemetryAsync(
         Guid sessionId, string region, int itemCount, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A node submitted telemetry for a session belonging to a different region
+    /// (`telemetry_region_mismatch`, **high**). Either a node is misconfigured, or one is
+    /// attempting to write browsing history against another region's analysts; the items are
+    /// discarded either way.
+    /// </summary>
+    Task RegionMismatchAsync(
+        Guid sessionId, string claimedRegion, string sessionRegion, int itemCount,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>No-op sink for tests that do not assert on audit.</summary>
@@ -26,4 +36,8 @@ public sealed class NullTelemetryAuditSink : ITelemetryAuditSink
 
     public Task UnattributableTelemetryAsync(
         Guid sessionId, string region, int itemCount, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task RegionMismatchAsync(
+        Guid sessionId, string claimedRegion, string sessionRegion, int itemCount,
+        CancellationToken cancellationToken) => Task.CompletedTask;
 }

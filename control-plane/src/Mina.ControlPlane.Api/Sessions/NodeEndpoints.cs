@@ -1,4 +1,5 @@
 using Mina.ControlPlane.Application.Telemetry;
+using System.Security.Claims;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.Observability;
 
@@ -22,8 +23,8 @@ public sealed record TelemetryAcceptedDto(int Recorded, int Aggregated, int Unat
 /// <summary>
 /// The egress nodes' interface to the control plane: which sessions to serve, and where their
 /// hostname telemetry goes. Nodes authenticate with their own managed identity and hold the node
-/// app role — an analyst token cannot reach these, and neither can read another region's sessions
-/// beyond what it asks for.
+/// app role, plus a per-region grant (<c>Mina.Node.&lt;region&gt;</c>). An analyst token cannot
+/// reach these at all, and a node cannot read or write for a region it was not granted.
 /// </summary>
 public static class NodeEndpoints
 {
@@ -34,7 +35,7 @@ public static class NodeEndpoints
         var group = app.MapGroup("/api/nodes").RequireAuthorization(NodePolicy);
 
         group.MapGet("/{region}/sessions", async (
-            string region, NodeDirectoryService directory, CancellationToken ct) =>
+            string region, ClaimsPrincipal node, NodeDirectoryService directory, CancellationToken ct) =>
         {
             if (!RegionName.IsWellFormed(region))
             {
@@ -42,12 +43,20 @@ public static class NodeEndpoints
                     "A well-formed region is required.", statusCode: StatusCodes.Status400BadRequest);
             }
 
+            // Being a node is not enough: the caller must be *this* region's node.
+            if (!NodeRegionGrant.IsGrantedFor(node, region))
+            {
+                return Results.Problem(
+                    $"This node is not granted region '{region}'.", statusCode: StatusCodes.Status403Forbidden);
+            }
+
             var entries = await directory.ListAsync(region, ct);
             return Results.Ok(entries.Select(e => new NodeSessionDto(e.SessionId, e.Suppressed, e.LeaseExpiresAt)));
         });
 
         group.MapPost("/telemetry", async (
-            TelemetryBatchDto dto, TelemetryIngestService ingest, MinaMetrics metrics, CancellationToken ct) =>
+            TelemetryBatchDto dto, ClaimsPrincipal node, TelemetryIngestService ingest,
+            MinaMetrics metrics, CancellationToken ct) =>
         {
             // Same reasoning as session issuance: the region becomes a metric dimension and an
             // audit field, so it is bounded before either sees it.
@@ -55,6 +64,12 @@ public static class NodeEndpoints
             {
                 return Results.Problem(
                     "A well-formed region is required.", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (!NodeRegionGrant.IsGrantedFor(node, dto.Region))
+            {
+                return Results.Problem(
+                    $"This node is not granted region '{dto.Region}'.", statusCode: StatusCodes.Status403Forbidden);
             }
 
             var batch = new TelemetryBatch(dto.Region, [.. dto.Items.Select(i => new TelemetryItem(

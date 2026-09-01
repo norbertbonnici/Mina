@@ -136,6 +136,23 @@ public class TelemetryIngestServiceTests
     }
 
     [Fact]
+    public async Task Telemetry_claiming_a_session_from_another_region_is_discarded_and_reported()
+    {
+        var h = new Harness();
+
+        // A node in another region submitting against this session: without the check, the region
+        // is merely a label the caller picks, and one node could write browsing history against
+        // another region's analysts.
+        var result = await h.Service.IngestAsync(
+            new TelemetryBatch("northeurope", [Item(h.SessionId, "elsewhere.example")]), default);
+
+        Assert.Equal(0, result.Recorded);
+        Assert.Equal(1, result.Unattributable);
+        Assert.Equal((h.SessionId, "northeurope", Region, 1), Assert.Single(h.Audit.RegionMismatches));
+        Assert.Empty(await h.Telemetry.ListForSessionAsync(h.SessionId, default));
+    }
+
+    [Fact]
     public async Task An_empty_batch_is_accepted_without_effect()
     {
         var h = new Harness();
@@ -238,6 +255,8 @@ public class TelemetryIngestServiceTests
 
         public List<(Guid SessionId, string Region, int Count)> Unattributable { get; } = [];
 
+        public List<(Guid SessionId, string Claimed, string Actual, int Count)> RegionMismatches { get; } = [];
+
         public Task SuppressionMismatchAsync(
             Guid sessionId, string region, int itemCount, CancellationToken cancellationToken)
         {
@@ -249,6 +268,14 @@ public class TelemetryIngestServiceTests
             Guid sessionId, string region, int itemCount, CancellationToken cancellationToken)
         {
             Unattributable.Add((sessionId, region, itemCount));
+            return Task.CompletedTask;
+        }
+
+        public Task RegionMismatchAsync(
+            Guid sessionId, string claimedRegion, string sessionRegion, int itemCount,
+            CancellationToken cancellationToken)
+        {
+            RegionMismatches.Add((sessionId, claimedRegion, sessionRegion, itemCount));
             return Task.CompletedTask;
         }
     }

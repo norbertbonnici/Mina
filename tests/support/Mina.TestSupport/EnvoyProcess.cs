@@ -29,8 +29,14 @@ public sealed class EnvoyProcess : IAsyncDisposable
 
     public int IngressPort { get; }
 
-    /// <summary>File Envoy's stdout is captured to — the access log carrying hostname telemetry.</summary>
+    /// <summary>File Envoy's stdout is captured to (its own diagnostics).</summary>
     public string OutputPath => Path.Combine(_workingDirectory.FullName, "envoy.out");
+
+    /// <summary>
+    /// The access log carrying hostname telemetry — the file the node sidecar consumes in
+    /// production, redirected here so a test run writes nothing outside its temp directory.
+    /// </summary>
+    public string AccessLogPath => Path.Combine(_workingDirectory.FullName, "envoy-access.log");
 
     /// <summary>The Envoy binary from the MINA_ENVOY environment variable, if it is set and exists.</summary>
     public static string? LocateBinary()
@@ -79,6 +85,8 @@ public sealed class EnvoyProcess : IAsyncDisposable
         var configPath = Path.Combine(work.FullName, "envoy.yaml");
         File.WriteAllText(configPath, File.ReadAllText(LocateConfig())
             .Replace("/etc/mina/tls", work.FullName, StringComparison.Ordinal)
+            .Replace("/var/log/mina/envoy-access.log",
+                Path.Combine(work.FullName, "envoy-access.log"), StringComparison.Ordinal)
             .Replace("port_value: 8443", $"port_value: {ingressPort}", StringComparison.Ordinal)
             .Replace("port_value: 9901", $"port_value: {adminPort}", StringComparison.Ordinal));
 

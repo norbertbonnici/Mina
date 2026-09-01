@@ -47,9 +47,15 @@ static_resources:
           upgrade_configs:
           - upgrade_type: CONNECT
           access_log:
-          - name: envoy.access_loggers.stdout
+          - name: envoy.access_loggers.file
             typed_config:
-              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+              # A file, not stdout: the sidecar consumes this and ships it to the control plane.
+              # Logging to stdout put these records in the journal instead, where nothing read them
+              # and they simply accumulated. Treat this file as a short-lived buffer, not a record:
+              # it holds destinations for suppressed sessions too, because Envoy has no per-session
+              # suppression yet (M2-3), so it is mode 0640 and consumed continuously.
+              path: /var/log/mina/envoy-access.log
               # Hostname telemetry (mina.hostname.v1). The node sidecar ships these to the
               # control plane; suppressed sessions are dropped at the sidecar/control plane per
               # ADR-0003 (a per-session suppression list is applied there, not here).
