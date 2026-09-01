@@ -38,4 +38,14 @@ module "egress_stamp" {
   ingress_allowed_cidrs = var.ingress_allowed_cidrs
   corp_public_cidrs     = var.corp_public_cidrs
   admin_ssh_public_key  = var.admin_ssh_public_key
+  node_image_version    = var.node_image_version
+
+  # The committed Envoy configuration is injected here, so what is in git is what the node runs.
+  # The module accepted custom_data all along and nothing ever passed it, which meant the VMSS
+  # booted stock Ubuntu with no Mina software on it at all.
+  custom_data = templatefile("${path.module}/../../../../egress-node/cloud-init.yaml.tftpl", {
+    envoy_config  = file("${path.module}/../../../../egress-node/envoy/envoy-bootstrap.yaml")
+    envoy_version = var.envoy_version
+    envoy_sha256  = var.envoy_sha256
+  })
 }

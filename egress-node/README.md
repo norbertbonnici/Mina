@@ -18,7 +18,9 @@ boundary is Envoy's well-exercised path, so we don't put novel security-critical
     DNS happens here, never on the endpoint.
   - **Hostname telemetry** (`mina.hostname.v1`) via access log — the plaintext CONNECT authority,
     logged with no TLS interception (ADR-0002 Option 1).
-- `cloud-init.yaml` — node bootstrap: runs Envoy as a hardened systemd unit, fetches TLS material
+- `cloud-init.yaml.tftpl` — node bootstrap, rendered by Terraform so the committed Envoy config in
+  `envoy/` is what the node actually runs: installs a pinned, checksum-verified Envoy, runs it as a
+  hardened systemd unit under a fixed `mina-envoy` account, fetches TLS material
   from Key Vault via managed identity (M2), fails closed if certs are absent.
 
 ## Verify the config locally

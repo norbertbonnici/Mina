@@ -33,3 +33,30 @@ variable "control_plane_egress_cidrs" {
   EOT
   type        = list(string)
 }
+
+variable "node_image_version" {
+  description = "Exact Ubuntu 24.04 image version for the egress nodes (never \"latest\"; see the module variable)."
+  type        = string
+}
+
+variable "envoy_version" {
+  description = "Envoy release to install on the nodes, without the leading v."
+  type        = string
+  default     = "1.39.1"
+}
+
+variable "envoy_sha256" {
+  description = <<-EOT
+    SHA-256 of envoy-<version>-linux-x86_64 from the GitHub release. The node refuses to install a
+    binary that does not match, so this pin is the supply-chain control for the process that
+    terminates every analyst's research traffic (threat N7). Verify a new value against the release
+    before changing it; do not copy it from anywhere but the release itself.
+  EOT
+  type        = string
+  default     = "002c6e1c69ed0fa0ea381887247cadadfaec9481375fa8d8d2b1731eeabf40b8"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.envoy_sha256))
+    error_message = "envoy_sha256 must be a 64-character lowercase hex SHA-256 digest."
+  }
+}

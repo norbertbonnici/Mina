@@ -15,6 +15,11 @@ corp_public_cidrs = []
 
 admin_ssh_public_key = "ssh-ed25519 AAAA... mina-dev-admin"
 
+# Exact image version — never "latest", or the same apply produces different nodes (AC-018). List
+# what is available with:
+#   az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all -o table
+node_image_version = "24.04.202508190"
+
 # --- Control plane (on premises since ADR-0006) -------------------------------------------
 # Public source addresses the Proxmox-hosted control plane reaches Azure from — the FIAU DMZ's
 # egress addresses. The Key Vault and the audit storage account deny by default and admit only

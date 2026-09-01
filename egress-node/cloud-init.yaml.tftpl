@@ -1,0 +1,147 @@
+#cloud-config
+# Mina egress node bootstrap (M1-2). Brings up Envoy as the authenticated forward CONNECT proxy
+# behind the stamp's load balancer — the reproducible, minimal-surface node of ARCHITECTURE §3.3
+# and THREAT_MODEL ("egress host compromised" → minimal image, rebuildable).
+#
+# This is a Terraform template, not a standalone file. The Envoy configuration is injected from
+# egress-node/envoy/envoy-bootstrap.yaml at plan time, so the config in git is the config that runs.
+# It used to be the literal string "# placeholder", waiting for a deployment pipeline that does not
+# exist, which meant a booted node could never have served traffic.
+#
+# TLS material is NOT baked into the image. In production the node fetches its server certificate
+# and the internal CA from Key Vault using the VMSS managed identity (still TODO — M2-2c); for the
+# M1 lab the certs are provisioned out of band into /etc/mina/tls. The CA private key never reaches
+# the node: it holds its own server certificate and the CA's public certificate only.
+
+groups:
+  - mina-tls
+  - mina-log
+
+users:
+  - default
+  # A fixed service account rather than systemd's DynamicUser. DynamicUser is the better default in
+  # isolation, but the sidecar has to READ the access log Envoy writes, and a per-boot transient uid
+  # and group make that sharing unexpressible. A named user and a shared mina-log group make the
+  # ownership predictable, which is what lets the log be group-readable and not world-readable.
+  - name: mina-envoy
+    system: true
+    shell: /usr/sbin/nologin
+    lock_passwd: true
+    primary_group: mina-envoy
+    groups: [mina-tls, mina-log]
+
+write_files:
+  - path: /etc/mina/envoy/envoy-bootstrap.yaml
+    permissions: "0640"
+    owner: "root:mina-tls"
+    content: |
+      ${indent(6, envoy_config)}
+
+  - path: /usr/local/sbin/mina-install-envoy.sh
+    permissions: "0700"
+    owner: "root:root"
+    content: |
+      #!/usr/bin/env bash
+      # Pinned and checksum-verified. A node that cannot prove it has the expected Envoy build must
+      # not start one: an unverified proxy binary on the machine that terminates every analyst's
+      # research traffic is the supply-chain case THREAT_MODEL N7 is about.
+      set -euo pipefail
+
+      version="${envoy_version}"
+      expected="${envoy_sha256}"
+      url="https://github.com/envoyproxy/envoy/releases/download/v$${version}/envoy-$${version}-linux-x86_64"
+      tmp="$(mktemp)"
+      trap 'rm -f "$${tmp}"' EXIT
+
+      curl -fsSL --retry 3 --retry-delay 5 -o "$${tmp}" "$${url}"
+
+      actual="$(sha256sum "$${tmp}" | cut -d' ' -f1)"
+      if [ "$${actual}" != "$${expected}" ]; then
+        echo "envoy checksum mismatch: expected $${expected}, got $${actual}" >&2
+        exit 1
+      fi
+
+      install -m 0755 -o root -g root "$${tmp}" /usr/local/bin/envoy
+      /usr/local/bin/envoy --version
+
+  - path: /usr/local/sbin/mina-fetch-certs.sh
+    permissions: "0750"
+    owner: "root:root"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      install -d -m 0750 -o root -g mina-tls /etc/mina/tls
+      # TODO(M2-2c): fetch the server certificate/key and the CA public certificate from Key Vault
+      # using the VMSS managed identity. Fail closed — if the fetch fails the unit fails, and Envoy
+      # never starts, so the node cannot serve without valid, current material.
+      #   token=$(curl -s -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net")
+      #   ... az keyvault secret download ...
+      test -s /etc/mina/tls/server.crt
+      test -s /etc/mina/tls/server.key
+      test -s /etc/mina/tls/ca.crt
+      chgrp mina-tls /etc/mina/tls/server.crt /etc/mina/tls/server.key /etc/mina/tls/ca.crt
+      chmod 0640 /etc/mina/tls/server.crt /etc/mina/tls/server.key /etc/mina/tls/ca.crt
+
+  # A real unit. mina-envoy.service declared Requires= on this and nothing ever created it, so the
+  # dependency could not resolve and Envoy would not have started even with a binary present.
+  - path: /etc/systemd/system/mina-fetch-certs.service
+    permissions: "0644"
+    owner: "root:root"
+    content: |
+      [Unit]
+      Description=Fetch Mina egress node TLS material
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/mina-fetch-certs.sh
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/mina-envoy.service
+    permissions: "0644"
+    owner: "root:root"
+    content: |
+      [Unit]
+      Description=Mina egress Envoy
+      After=network-online.target mina-fetch-certs.service
+      Requires=mina-fetch-certs.service
+      [Service]
+      ExecStart=/usr/local/bin/envoy -c /etc/mina/envoy/envoy-bootstrap.yaml --log-level info
+      Restart=always
+      RestartSec=2
+      User=mina-envoy
+      Group=mina-envoy
+      SupplementaryGroups=mina-tls mina-log
+      # Access-log files land 0640 rather than 0644: the sidecar's group reads them, nothing else
+      # does. The log carries destinations for suppressed sessions too (Envoy has no per-session
+      # suppression — M2-3), so it is a short-lived buffer that must not be world-readable.
+      UMask=0027
+      # /run/mina for the admin Unix socket. The admin interface is deliberately not on TCP: on a
+      # forward proxy, loopback is reachable through the proxy itself.
+      RuntimeDirectory=mina
+      RuntimeDirectoryMode=0750
+      # ProtectSystem=strict makes the whole filesystem read-only to the unit, so the access-log
+      # directory has to be granted back explicitly. Without this Envoy cannot open the log it is
+      # configured to write, whatever the directory permissions say.
+      ReadWritePaths=/var/log/mina
+      NoNewPrivileges=yes
+      ProtectSystem=strict
+      ProtectHome=yes
+      PrivateTmp=yes
+      ReadOnlyPaths=/etc/mina
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # setgid so every access-log file inherits mina-log, which is what makes the sidecar's read
+  # possible without widening the mode.
+  - [ install, -d, -m, "2750", -o, mina-envoy, -g, mina-log, /var/log/mina ]
+  - [ /usr/local/sbin/mina-install-envoy.sh ]
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, mina-fetch-certs.service ]
+  - [ systemctl, enable, --now, mina-envoy.service ]
+
+# The Wazuh agent and the telemetry sidecar (allowlist sync + hostname-log shipping) join here in
+# M2-3/M3-4. The sidecar runs as a member of mina-log so it can read the access log.

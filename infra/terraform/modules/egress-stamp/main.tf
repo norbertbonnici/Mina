@@ -285,7 +285,10 @@ resource "azurerm_linux_virtual_machine_scale_set" "nodes" {
     publisher = "Canonical"
     offer     = "ubuntu-24_04-lts"
     sku       = "server"
-    version   = "latest"
+    # Pinned, not "latest": AC-018 asks that a clean environment be recreatable from
+    # source-controlled IaC, and an image that changes underneath the configuration makes the same
+    # apply produce a different node. Rolling it forward is a deliberate, reviewable edit.
+    version = var.node_image_version
   }
 
   os_disk {

@@ -106,7 +106,23 @@ variable "zones" {
 }
 
 variable "custom_data" {
-  description = "Optional cloud-init for the nodes (base64 handled by the module). Envoy bootstrap arrives with M1-2."
+  description = "Cloud-init for the nodes (base64 handled by the module); carries the Envoy bootstrap."
   type        = string
   default     = null
+}
+
+variable "node_image_version" {
+  description = <<-EOT
+    Exact Ubuntu 24.04 image version, e.g. "24.04.202508190". Deliberately has no default: "latest"
+    makes the same configuration produce different nodes on different days, which is what AC-018
+    exists to prevent. List the available versions with
+
+      az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all -o table
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.node_image_version))
+    error_message = "node_image_version must be an explicit version such as 24.04.202508190, never 'latest'."
+  }
 }
