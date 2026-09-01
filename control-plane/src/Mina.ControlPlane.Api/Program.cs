@@ -41,6 +41,11 @@ builder.Services.Configure<ForwardedHeadersOptions>(
 var allowDevelopmentFallbacks = HostingGuard.DevelopmentFallbacksAllowed(
     builder.Configuration, builder.Environment);
 
+// ADR-0006 constraint 1: the node-facing endpoint is published to the internet, so the management
+// surface must not be reachable there even if the DMZ proxy is misconfigured. Two Kestrel listeners,
+// and every endpoint declares which one it belongs to.
+var listenersSeparated = builder.ConfigureMinaListeners();
+
 // Operational telemetry to SigNoz. The scrub processors are part of this wiring, not optional.
 builder.Services.AddMinaObservability(builder.Configuration);
 
@@ -101,6 +106,12 @@ else
 builder.Services.AddSingleton<IEgressDirectory, ConfiguredEgressDirectory>();
 builder.Services.AddScoped<ISessionAuditSink, PersistentSessionAuditSink>();
 builder.Services.AddSingleton(TimeProvider.System);
+HostingGuard.RequireExplicitFallback(
+    allowDevelopmentFallbacks || listenersSeparated,
+    "a single listener serving the node API and the management surface together, so publishing it "
+    + "to the DMZ would publish the approvals UI and the audit read API with it",
+    $"{MinaListenerOptions.Section}:NodePort and :ManagementPort");
+
 // The signing key for every session certificate. The Key Vault-backed provider is M2-2c; until it
 // exists there is no production-capable CA, and starting without one would mint session
 // certificates from a key that is regenerated on every restart.
@@ -179,15 +190,29 @@ if (!runBackgroundServices)
     StartupLog.BackgroundServicesDisabled(app.Logger);
 }
 
+// Routing first so the endpoint's listener metadata is known; the separation check before
+// authentication so a request on the wrong listener gets a plain 404 rather than a challenge.
+app.UseRouting();
+app.UseMinaListenerSeparation();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// No listener declared: the health probe answers on both, so the DMZ proxy and the corporate load
+// balancer can each check the listener they front.
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", component = "mina-control-plane-api" }))
     .AllowAnonymous();
-app.MapMinaSessionEndpoints();
-app.MapMinaSensitiveSessionEndpoints();
-app.MapMinaNodeEndpoints();
-app.MapMinaAuditEndpoints();
+
+// Published to the internet from the FIAU DMZ: the egress nodes' allowlist and telemetry ingest,
+// and nothing else.
+app.MapMinaNodeEndpoints(MinaListener.Node);
+
+// Corporate-facing only. The analyst session API belongs here because the endpoint agent runs on a
+// corporate-managed workstation on the corporate network; if analysts ever need Mina from outside
+// that network, publishing these is a separate exposure decision and not something to inherit by
+// accident.
+app.MapMinaSessionEndpoints(MinaListener.Management);
+app.MapMinaSensitiveSessionEndpoints(MinaListener.Management);
+app.MapMinaAuditEndpoints(MinaListener.Management);
 
 app.Run();
 

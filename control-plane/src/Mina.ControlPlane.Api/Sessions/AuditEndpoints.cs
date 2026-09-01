@@ -1,6 +1,8 @@
 using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Domain.Audit;
 
+using Mina.ControlPlane.Hosting;
+
 namespace Mina.ControlPlane.Api.Sessions;
 
 public sealed record AuditEventDto(
@@ -41,9 +43,10 @@ public static class AuditEndpoints
 {
     public const string AdminPolicy = "MinaAdmin";
 
-    public static IEndpointRouteBuilder MapMinaAuditEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapMinaAuditEndpoints(
+        this IEndpointRouteBuilder app, MinaListener listener)
     {
-        var group = app.MapGroup("/api/audit").RequireAuthorization(AdminPolicy);
+        var group = app.MapGroup("/api/audit").RequireAuthorization(AdminPolicy).RequireListener(listener);
 
         group.MapGet("/recent", async (IAuditEventStore store, int? limit, CancellationToken ct) =>
         {

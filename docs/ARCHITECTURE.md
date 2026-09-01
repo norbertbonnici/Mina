@@ -126,9 +126,12 @@ corporate networks — they call a public endpoint, exactly as they called an Az
   certificate issuance (signing key in Key Vault, never exported); node config distribution; audit
   event write path. **Two listeners with different exposure** (ADR-0006 constraint 3): the
   node-facing listener carries only the allowlist and telemetry-ingest endpoints and is the only one
-  published to the internet; the portal, audit read and administrative endpoints bind a
-  corporate-facing listener, so they are unreachable from outside even if the DMZ proxy is
-  misconfigured. The separation is by binding, not by routing.
+  published to the internet; the analyst session API, the suppression workflow, the audit read API
+  and every administrative endpoint bind a corporate-facing listener. The discriminator is the local
+  port the TCP connection was accepted on, which no client header and no proxy rule can influence,
+  and the check runs before authentication so an endpoint on the wrong listener answers a plain 404
+  rather than a challenge that would confirm it exists elsewhere. Ports are configured under
+  `Mina:Hosting:Listeners`; a host that is not Development refuses to start without both.
 - **Management UI** (Blazor static server rendering, same host family): approvals, session/health/
   audit visibility, region policy administration. Entra sign-in, app-role authorisation,
   Conditional Access (compliant device) enforced at the Entra layer. No longer internet-reachable,

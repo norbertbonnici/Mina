@@ -8,6 +8,8 @@ using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.Observability;
 
+using Mina.ControlPlane.Hosting;
+
 namespace Mina.ControlPlane.Api.Sessions;
 
 public sealed record IssueSessionDto(string Region, string CsrPem);
@@ -36,13 +38,16 @@ public static class SessionEndpoints
     public const string AnalystPolicy = "MinaAnalyst";
     private const string CsrPemLabel = "CERTIFICATE REQUEST";
 
-    public static IEndpointRouteBuilder MapMinaSessionEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapMinaSessionEndpoints(
+        this IEndpointRouteBuilder app, MinaListener listener)
     {
         app.MapGet("/api/regions", (RegionPolicy regions) =>
                 Results.Ok(new { regions = regions.SelectableRegions }))
-            .RequireAuthorization(AnalystPolicy);
+            .RequireAuthorization(AnalystPolicy)
+            .RequireListener(listener);
 
-        var group = app.MapGroup("/api/sessions").RequireAuthorization(AnalystPolicy);
+        var group = app.MapGroup("/api/sessions").RequireAuthorization(AnalystPolicy)
+            .RequireListener(listener);
 
         group.MapPost("/", IssueAsync);
         group.MapPost("/{id:guid}/renew", RenewAsync);

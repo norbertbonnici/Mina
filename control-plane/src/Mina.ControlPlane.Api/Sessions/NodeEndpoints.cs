@@ -3,6 +3,8 @@ using System.Security.Claims;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.Observability;
 
+using Mina.ControlPlane.Hosting;
+
 namespace Mina.ControlPlane.Api.Sessions;
 
 public sealed record NodeSessionDto(Guid SessionId, bool Suppressed, DateTimeOffset LeaseExpiresAt);
@@ -31,9 +33,10 @@ public static class NodeEndpoints
 {
     public const string NodePolicy = "MinaNode";
 
-    public static IEndpointRouteBuilder MapMinaNodeEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapMinaNodeEndpoints(
+        this IEndpointRouteBuilder app, MinaListener listener)
     {
-        var group = app.MapGroup("/api/nodes").RequireAuthorization(NodePolicy);
+        var group = app.MapGroup("/api/nodes").RequireAuthorization(NodePolicy).RequireListener(listener);
 
         group.MapGet("/{region}/sessions", async (
             string region, ClaimsPrincipal node, NodeDirectoryService directory, CancellationToken ct) =>

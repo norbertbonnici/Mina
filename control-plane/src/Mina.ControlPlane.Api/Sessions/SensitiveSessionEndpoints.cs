@@ -3,6 +3,8 @@ using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 
+using Mina.ControlPlane.Hosting;
+
 namespace Mina.ControlPlane.Api.Sessions;
 
 public sealed record RequestSuppressionDto(string JustificationReference, int RequestedMinutes);
@@ -35,13 +37,16 @@ public static class SensitiveSessionEndpoints
 {
     public const string ApproverPolicy = "MinaApprover";
 
-    public static IEndpointRouteBuilder MapMinaSensitiveSessionEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapMinaSensitiveSessionEndpoints(
+        this IEndpointRouteBuilder app, MinaListener listener)
     {
         // Raised against a session the analyst owns.
         app.MapPost("/api/sessions/{sessionId:guid}/sensitive", RequestAsync)
-            .RequireAuthorization(SessionEndpoints.AnalystPolicy);
+            .RequireAuthorization(SessionEndpoints.AnalystPolicy)
+            .RequireListener(listener);
 
-        var group = app.MapGroup("/api/sensitive-requests").RequireAuthorization();
+        var group = app.MapGroup("/api/sensitive-requests").RequireAuthorization()
+            .RequireListener(listener);
 
         group.MapGet("/pending", ListPendingAsync).RequireAuthorization(ApproverPolicy);
         group.MapPost("/{id:guid}/approve", ApproveAsync).RequireAuthorization(ApproverPolicy);
