@@ -39,7 +39,70 @@ against the code; the remainder are listed below as unverified.
 - **low — session ownership returns 403 for another user's session and 404 for a missing one**,
   creating the existence oracle the code's own comment says it avoids.
 
-Roughly thirty lower-ranked findings from the same review remain unverified.
+All remaining findings have now been verified: 26 were put to an independent skeptic reading the
+code as it stands after the fixes above; 14 survived and 12 were refuted. After merging duplicates,
+eleven distinct defects remain, listed below. Nothing that survived breaches a stated security
+property directly — there is no open-proxy path, no route to corporate networks, no way for
+suppression to engage without a distinct approver, and no governance action that proceeds unlogged.
+
+## Verified and outstanding
+
+### Fix before production
+
+1. **HIGH — the suppression expiry sweeper stops the whole control plane.**
+   `SensitiveSessionExpiryService.cs:36` catches only `InvalidOperationException` and
+   `TimeoutException`, but the swept path throws `AuditWriteException` and `DbUpdateException` /
+   `DbUpdateConcurrencyException` — and optimistic concurrency makes that conflict *expected*, since
+   the sweeper and the agent's renewal write the same row. `BackgroundServiceExceptionBehavior`
+   defaults to `StopHost`, so the escape takes down session issuance and renewal with it, and the
+   deterministic ordering of due rows turns it into a crash loop. Widen the filter to any
+   non-shutdown exception and isolate each request inside the sweep loop.
+
+2. **MEDIUM — WORM anchoring is claimed but never computed, compared, or monitored.**
+   `AuditChainVerifier` reads only the database, and `IAuditExportSink` has no read method, so no
+   caller *could* compare an export to the chain: a privileged writer who rewrites the rows and
+   recomputes the hashes forward gets `intact` from `/api/audit/verify`. Separately, `ExportAsync`
+   anchors from the sink's high-water mark and treats an empty read as "nothing new", so a database
+   restore silently stops anchoring for good with no log, event or metric. **Correct the claims in
+   `AuditExportService.cs`, `Persistence/README.md` and `AuditEndpoints.cs` now**; add read-back and
+   a tip check before go-live. The mechanism only has teeth once the sink is genuinely write-once,
+   which needs the Azure immutable-blob container that `infra/terraform` does not yet define.
+
+3. **MEDIUM — Envoy's admin interface is reachable *through the tunnel*.**
+   Admin binds `127.0.0.1:9901`, and the forward proxy has no destination policy — `domains: ["*"]`
+   with a bare `connect_matcher`, and nothing in the agent or sidecar constrains the CONNECT
+   authority. A holder of a live session certificate can `CONNECT 127.0.0.1:9901` and reach
+   `/config_dump`, `/certs` or `/quitquitquit`. The same gap puts IMDS (`169.254.169.254`) in reach
+   on a node intended to carry a managed identity with Key Vault access. NSGs cannot help: neither
+   address is subject to them. Move admin to a Unix socket, and raise a follow-up for an
+   Envoy-enforced destination deny-list — fixing only the admin listener leaves IMDS open.
+
+4. **MEDIUM — one oversized hostname discards a whole telemetry batch.** Nothing bounds hostname
+   length on the ingest path, the column is `nvarchar(253)`, and the repository saves the batch in
+   one unit of work — while the sidecar drops a failed batch by design. A local process using the
+   agent's loopback proxy can therefore blind a node's hostname telemetry without manager approval
+   and without the suppression audit trail. Bound it at ingest, exactly as `RegionName` now does.
+
+5. **LOW — `JustificationReference` is unbounded against an `nvarchar(128)` column**, giving a 500
+   where every other malformed input gives a 400. One line in the aggregate.
+
+6. **LOW — retention is documented as implemented and is not.** Correct
+   `LOGGING_AND_PRIVACY.md:74` and give retention an owning backlog row. Do not build a deletion job
+   over the audit schema without its own ADR: C1 is hash-chained precisely so deletion is detectable.
+
+### Fix when convenient
+
+- **`EfAuditEventStore` relabels every `DbUpdateException` as a sequence conflict**, retrying a hard
+  database fault five times and reporting the wrong cause. Fail-closed, so diagnostics only.
+- **403/404 existence oracle** on session endpoints, contradicting the service's own comment. Ids are
+  unguessable and probing is audited; a one-line consistency fix.
+- **Expiry of a never-activated approval revokes the analyst's live, never-suppressed session.**
+  Errs fail-closed, but teaches analysts to avoid the approved workflow. Gate the revoke on
+  `request.ActivatedAt is not null`.
+- **Undecided requests never lapse and the approver queue has no limit** — the only unbounded query
+  in the codebase.
+- **`MaxDuration` is unvalidated** and `RequestedDuration` is a SQL `time` column, so a configured
+  window of 24 hours or more fails at the database rather than at startup.
 
 ## Deliberate residual risk
 
