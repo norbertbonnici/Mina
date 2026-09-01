@@ -1,0 +1,51 @@
+<Window x:Class="Mina.EndpointAgent.Tray.SensitiveRequestWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Request a sensitive session"
+        Width="400"
+        SizeToContent="Height"
+        WindowStyle="ToolWindow"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Panel}"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display"
+        FontFamily="Segoe UI">
+
+    <StackPanel Margin="16">
+        <TextBlock Text="Request a sensitive session"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Foreground="{StaticResource Text}" />
+
+        <TextBlock Margin="0,10,0,4" Text="Justification reference"
+                   FontSize="11.5" Foreground="{StaticResource Muted}" />
+        <TextBox x:Name="ReferenceBox" Style="{StaticResource PanelTextBox}" MaxLength="128" />
+
+        <TextBlock Margin="0,12,0,4" Text="Suppress hostname logging for"
+                   FontSize="11.5" Foreground="{StaticResource Muted}" />
+        <StackPanel Orientation="Horizontal">
+            <TextBox x:Name="MinutesBox" Style="{StaticResource PanelTextBox}" Width="70"
+                     Text="60" MaxLength="4" />
+            <TextBlock x:Name="MinutesHint" Margin="8,0,0,0" VerticalAlignment="Center"
+                       FontSize="11.5" Foreground="{StaticResource Muted}" />
+        </StackPanel>
+
+        <Border Margin="0,14,0,0" Padding="10,8,10,8" CornerRadius="4"
+                BorderBrush="{StaticResource Line}" BorderThickness="3,1,1,1">
+            <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
+                       Text="Your identity, this device, the session times, the region, this reference, and the manager who decides are recorded either way. Approval suppresses the hostnames you visit — nothing more, and only until the window ends. When it ends, the session ends with it." />
+        </Border>
+
+        <TextBlock x:Name="ValidationText" Margin="0,10,0,0" Visibility="Collapsed"
+                   FontSize="11.5" TextWrapping="Wrap" Foreground="{StaticResource Bad}" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="SendButton" Content="Send for approval" IsDefault="True"
+                    Style="{StaticResource PrimaryButton}" />
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True"
+                    Style="{StaticResource PanelButton}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

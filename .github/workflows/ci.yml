@@ -30,6 +30,31 @@ jobs:
           path: TestResults
           retention-days: 30
 
+  # The endpoint agent and tray carry two controls with no Unix equivalent: the tray pipe's DACL
+  # and FirstPipeInstance. The Linux job compiles them; only this one exercises them.
+  endpoint-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore (locked mode)
+        run: dotnet restore tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj --locked-mode
+      - name: Build the tray shell (WPF only builds fully on Windows)
+        run: dotnet build endpoint-agent/src/Mina.EndpointAgent.Tray/Mina.EndpointAgent.Tray.csproj -c Release
+      - name: Endpoint agent and tray tests
+        run: >
+          dotnet test tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj
+          -c Release --logger trx --results-directory TestResults
+      - name: Retain test evidence (AC-019)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-windows
+          path: TestResults
+          retention-days: 30
+
   terraform:
     runs-on: ubuntu-latest
     steps:

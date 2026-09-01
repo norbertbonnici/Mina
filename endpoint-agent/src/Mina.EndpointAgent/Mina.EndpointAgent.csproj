@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\integrations\signoz\src\Mina.Observability\Mina.Observability.csproj" />
+    <ProjectReference Include="..\Mina.EndpointAgent.Ipc\Mina.EndpointAgent.Ipc.csproj" />
   </ItemGroup>
 
 </Project>

@@ -72,7 +72,7 @@ Two Azure planes, deliberately separated:
 | Component | Form | Role |
 |---|---|---|
 | Endpoint agent | .NET Worker Service, runs as SYSTEM, Authenticode-signed, Intune Win32 app | Entra auth via WAM broker; session establishment/renewal; loopback proxy; mTLS tunnel client; WFP enforcement rules (variant C2); research-browser launch; local tamper monitoring |
-| Tray/status UI | Per-user WPF/WinUI app | FR-006: protected/unprotected state, selected region, logging mode; region selection; sensitive-session request; talks to agent over named pipe ACL'd to the interactive user |
+| Tray/status UI | Per-user WPF app (`Mina.EndpointAgent.Tray`, **built**) | FR-006: protected/unprotected state, selected region, logging mode; region selection; sensitive-session request; talks to agent over named pipe ACL'd to the interactive user |
 | Research browser | Dedicated Edge context per ADR-0001 C-enf decision (recommended: distinct-image-path Edge + dedicated user-data-dir) | The only thing that uses research egress |
 | Edge integration | Shortcut/launch config + hardening flags (+ policies where instance-scoping allows) | Locks proxy, disables QUIC/DoH, forces WebRTC proxy behaviour for the research instance |
 
@@ -85,12 +85,31 @@ Endpoint enforcement design (variant C2, recommended):
 2. The Mina shortcut starts the tray UI → agent authenticates and establishes the session →
    agent spawns the research browser with locked flags (`--user-data-dir`, `--proxy-server=127.0.0.1:<port>`,
    QUIC/DoH/WebRTC hardening flags; exact names pinned in Phase 1).
+
+   > **Open question (raised building the tray, 2026-09-01).** The agent runs as SYSTEM in session
+   > 0, and a service cannot spawn a process onto the interactive desktop without duplicating the
+   > logged-on user's token (`WTSQueryUserToken` → `DuplicateTokenEx` → `CreateProcessAsUser`).
+   > Three ways out, and the choice is security-relevant enough not to be made in passing:
+   >
+   > - **(a) Agent spawns via token duplication** — keeps the flag set in signed SYSTEM code where
+   >   a user-mode process cannot influence it, at the cost of a privileged token operation in the
+   >   agent.
+   > - **(b) Tray spawns it** — no privileged token work, and the flags still live in signed code
+   >   the analyst cannot edit, but a tampered tray could launch the research browser image with a
+   >   different command line. WFP and the proxy peer check still bound what that browser reaches,
+   >   so the flags are defence in depth either way.
+   > - **(c) The Intune-deployed shortcut spawns it** with the flags baked in and the agent only
+   >   supplying the port — which reintroduces a fixed, predictable port.
+   >
+   > Until this is decided, neither the agent nor the tray launches the browser, and the tray panel
+   > offers no launch button. Nothing else in the tray depends on the answer.
 3. The loopback proxy accepts connections only from the expected browser process (peer PID →
    image path + user-data-dir check) and only while an authenticated session exists. Otherwise
    it refuses — combined with fixed-proxy-no-fallback this is the fail-closed core (FR-007).
 4. Named-pipe IPC: SDDL restricted (SYSTEM + interactive user read/write); all
    privileged operations validated server-side in the agent; no secrets in user-readable config
-   (SR-006).
+   (SR-006). **Built** — see `endpoint-agent/README.md` for the DACL, the `FirstPipeInstance`
+   squat check, the frame and idle bounds, and which operations are re-validated.
 5. Agent self-monitoring: reports tamper indicators (WFP rule removal attempts, unexpected
    research-browser instances, proxy-port probes from foreign processes) as security events.
 

@@ -30,4 +30,48 @@ public sealed class MinaAgentOptions
 
     /// <summary>How often the agent checks session health and renewal.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Wait before the first retry after the protected path fails.</summary>
+    public TimeSpan RetryInitialDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Longest wait between retries. The backoff doubles up to this; it never gives up, because a
+    /// path that stays closed is the safe state and the analyst can see exactly why.
+    /// </summary>
+    public TimeSpan RetryMaxDelay { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>How long the agent reuses the control plane's region list before refetching.</summary>
+    public TimeSpan RegionCacheLifetime { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// How often the agent re-reads an undecided sensitive request. Fast enough that an approval
+    /// shows up while the analyst is still looking at the panel; slow enough that a tray polling
+    /// once a second does not become a control-plane call once a second.
+    /// </summary>
+    public TimeSpan SensitivePollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Longest suppression window the tray may ask for. The control plane holds the real policy
+    /// ceiling; this only stops the agent forwarding an obviously out-of-range request.
+    /// </summary>
+    public int MaxSensitiveRequestMinutes { get; set; } = 240;
+
+    /// <summary>Settings for the pipe the per-user tray connects on.</summary>
+    public TrayPipeOptions TrayPipe { get; set; } = new();
+}
+
+/// <summary>The local IPC surface the tray uses (ARCHITECTURE §3.1).</summary>
+public sealed class TrayPipeOptions
+{
+    /// <summary>
+    /// Whether to listen at all. A deployment with no tray — a kiosk, or a test host — should not
+    /// carry a local endpoint nothing consumes.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Concurrent pipe instances. Small on purpose: one interactive user needs one, and a handful
+    /// of spares absorbs reconnects without giving a local process many sockets to hold open.
+    /// </summary>
+    public int Instances { get; set; } = 4;
 }

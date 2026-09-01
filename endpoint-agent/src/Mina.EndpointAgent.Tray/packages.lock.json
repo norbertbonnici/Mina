@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows7.0": {
+      "mina.endpointagent.ipc": {
+        "type": "Project"
+      },
+      "mina.endpointagent.tray.core": {
+        "type": "Project",
+        "dependencies": {
+          "Mina.EndpointAgent.Ipc": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}

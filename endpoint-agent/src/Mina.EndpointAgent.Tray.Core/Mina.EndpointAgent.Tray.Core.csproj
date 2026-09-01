@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Mina.EndpointAgent.Tray</RootNamespace>
+    <!-- Everything the tray decides, with none of the Windows it draws on. The WPF shell in
+         Mina.EndpointAgent.Tray only binds to what this produces, which keeps the panel's actual
+         behaviour under test on CI's Linux hosts. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mina.EndpointAgent.Ipc\Mina.EndpointAgent.Ipc.csproj" />
+  </ItemGroup>
+
+</Project>

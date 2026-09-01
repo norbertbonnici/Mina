@@ -17,6 +17,9 @@
   <Folder Name="/endpoint-agent/" />
   <Folder Name="/endpoint-agent/src/">
     <Project Path="endpoint-agent/src/Mina.EndpointAgent/Mina.EndpointAgent.csproj" />
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent.Ipc/Mina.EndpointAgent.Ipc.csproj" />
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent.Tray/Mina.EndpointAgent.Tray.csproj" />
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent.Tray.Core/Mina.EndpointAgent.Tray.Core.csproj" />
   </Folder>
   <Folder Name="/integrations/" />
   <Folder Name="/integrations/signoz/" />
@@ -49,6 +52,7 @@
     <Project Path="tests/unit/Mina.ControlPlane.Application.Tests/Mina.ControlPlane.Application.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Domain.Tests/Mina.ControlPlane.Domain.Tests.csproj" />
     <Project Path="tests/unit/Mina.ControlPlane.Pki.Tests/Mina.ControlPlane.Pki.Tests.csproj" />
+    <Project Path="tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj" />
     <Project Path="tests/unit/Mina.EgressNode.Sidecar.Tests/Mina.EgressNode.Sidecar.Tests.csproj" />
     <Project Path="tests/unit/Mina.Observability.Tests/Mina.Observability.Tests.csproj" />
   </Folder>

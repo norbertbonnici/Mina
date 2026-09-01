@@ -7,7 +7,7 @@ namespace Mina.EndpointAgent.Session;
 /// authorises. While no instance of this exists, the agent has no path to the internet for the
 /// research browser — which is what makes the protected path fail closed.
 /// </summary>
-public sealed class ActiveSession : IDisposable
+public sealed class ActiveSession : IResearchSession, IDisposable
 {
     private readonly SessionKeyMaterial _keyMaterial;
 

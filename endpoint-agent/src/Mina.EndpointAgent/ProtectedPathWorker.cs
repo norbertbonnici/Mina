@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Mina.EndpointAgent.Configuration;
+using Mina.EndpointAgent.Ipc;
 using Mina.EndpointAgent.Proxy;
 using Mina.EndpointAgent.Session;
 
@@ -12,14 +13,15 @@ namespace Mina.EndpointAgent;
 /// error instead of quietly reaching the internet through ordinary corporate egress (FR-007).
 /// </summary>
 /// <remarks>
-/// Launching and pinning the research browser to the proxy port, WFP enforcement and the tray UI
-/// are the Windows-specific parts and land with M2-4; this worker is the platform-neutral core they
-/// build on.
+/// The worker is also the only writer of protected-path state in <see cref="AgentRuntimeState"/>,
+/// which is what the tray reports to the analyst (FR-006). Nothing the tray does changes that
+/// state directly; it asks, this loop decides, and the panel reflects the outcome.
 /// </remarks>
 internal sealed partial class ProtectedPathWorker(
     ResearchSessionManager sessions,
     SessionTunnelConnectionFactory tunnelFactory,
     IPeerAuthorizer peerAuthorizer,
+    AgentRuntimeState state,
     IOptions<MinaAgentOptions> options,
     ILoggerFactory loggerFactory,
     TimeProvider clock,
@@ -34,8 +36,11 @@ internal sealed partial class ProtectedPathWorker(
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await TickAsync(stoppingToken).ConfigureAwait(false);
-                await Task.Delay(_options.PollInterval, clock, stoppingToken).ConfigureAwait(false);
+                var wait = await TickAsync(stoppingToken).ConfigureAwait(false);
+
+                // A tray command — reconnect, end, change region — wakes this early, so the panel
+                // responds at once instead of at the next poll.
+                await state.WaitForNextTickAsync(wait, clock, stoppingToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -49,22 +54,37 @@ internal sealed partial class ProtectedPathWorker(
         }
     }
 
-    private async Task TickAsync(CancellationToken cancellationToken)
+    /// <summary>Runs one iteration and returns how long to wait before the next.</summary>
+    private async Task<TimeSpan> TickAsync(CancellationToken cancellationToken)
     {
+        if (state.Suspended)
+        {
+            // The analyst ended their session. Staying closed is the whole point — re-establishing
+            // here would make "End session" mean "end it for thirty seconds".
+            await CloseProtectedPathAsync().ConfigureAwait(false);
+            return _options.PollInterval;
+        }
+
         try
         {
             if (sessions.Current is null)
             {
-                await sessions.EstablishAsync(cancellationToken).ConfigureAwait(false);
+                state.ReportConnecting();
+                await sessions.EstablishAsync(state.Region, cancellationToken).ConfigureAwait(false);
                 await OpenProtectedPathAsync().ConfigureAwait(false);
-                return;
+                state.ReportProtected(_proxy?.Endpoint?.Port ?? 0);
+                return _options.PollInterval;
             }
 
             await sessions.RenewIfDueAsync(cancellationToken).ConfigureAwait(false);
             if (sessions.Current is null)
             {
                 await CloseProtectedPathAsync().ConfigureAwait(false);
+                return Fail("The session could not be renewed, so research browsing has stopped.");
             }
+
+            state.ReportProtected(_proxy?.Endpoint?.Port ?? 0);
+            return _options.PollInterval;
         }
         catch (Exception ex) when (ex is ControlPlaneException or HttpRequestException
                                    || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -75,8 +95,43 @@ internal sealed partial class ProtectedPathWorker(
             // try again on the next tick.
             Log.SessionUnavailable(logger, ex.Message);
             await CloseProtectedPathAsync().ConfigureAwait(false);
+            return Fail(DescribeForAnalyst(ex));
         }
     }
+
+    /// <summary>
+    /// Records a failure and returns the backoff before the next attempt. The agent never stops
+    /// retrying: a path that stays closed is the safe state, and the analyst can see why it is.
+    /// </summary>
+    private TimeSpan Fail(string reason)
+    {
+        var failuresSoFar = state.Snapshot().ConsecutiveFailures;
+        var delay = BackoffFor(failuresSoFar);
+        state.ReportFailed(reason, clock.GetUtcNow() + delay);
+        return delay;
+    }
+
+    private TimeSpan BackoffFor(int failuresSoFar)
+    {
+        // Doubling, capped. Shifting past 30 would overflow, and the cap has long since applied.
+        var doublings = Math.Min(failuresSoFar, 30);
+        var scaled = _options.RetryInitialDelay * Math.Pow(2, doublings);
+        return scaled >= _options.RetryMaxDelay ? _options.RetryMaxDelay : scaled;
+    }
+
+    /// <summary>
+    /// Turns a failure into something the analyst can act on, without putting transport detail in
+    /// front of them. The full message goes to the agent's log, not to the panel.
+    /// </summary>
+    private static string DescribeForAnalyst(Exception exception) => exception switch
+    {
+        ControlPlaneException { StatusCode: System.Net.HttpStatusCode.Forbidden } =>
+            "The control plane declined to issue a session for this device, account or region.",
+        ControlPlaneException { StatusCode: System.Net.HttpStatusCode.Unauthorized } =>
+            "Your sign-in is no longer accepted. Sign in again to resume research browsing.",
+        ControlPlaneException => "The control plane refused the session request.",
+        _ => "The control plane cannot be reached from this device.",
+    };
 
     private async Task OpenProtectedPathAsync()
     {

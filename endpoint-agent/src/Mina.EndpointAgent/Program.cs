@@ -7,10 +7,11 @@
 //
 // Still to come (M2-4, Windows-specific): MSAL/WAM silent sign-in in place of the configured-token
 // provider, WFP enforcement, the peer check that verifies the connecting process is the managed
-// research browser, launching that browser, and the tray UI.
+// research browser, and launching that browser. The tray UI is served from here over a named pipe.
 
 using Mina.EndpointAgent;
 using Mina.EndpointAgent.Configuration;
+using Mina.EndpointAgent.Ipc;
 using Mina.EndpointAgent.Proxy;
 using Mina.EndpointAgent.Session;
 using Mina.Observability;
@@ -54,11 +55,21 @@ builder.Services.AddHttpClient<ControlPlaneClient>(client =>
 builder.Services.AddSingleton<ResearchSessionManager>();
 builder.Services.AddSingleton<SessionTunnelConnectionFactory>();
 
+// Shared between the worker that maintains the protected path and the tray that reports it.
+builder.Services.AddSingleton<AgentRuntimeState>();
+builder.Services.AddSingleton<TrayControlService>();
+builder.Services.AddSingleton<ITrayControl>(sp => sp.GetRequiredService<TrayControlService>());
+builder.Services.AddSingleton<ISessionControl>(sp => sp.GetRequiredService<ResearchSessionManager>());
+
 // PoC peer check: loopback only. Verifying the connecting process is the managed research browser
 // is Windows-specific and lands with M2-4 (THREAT_MODEL B1).
 builder.Services.AddSingleton<IPeerAuthorizer, LoopbackPeerAuthorizer>();
 
 builder.Services.AddHostedService<ProtectedPathWorker>();
+
+// The per-user tray connects here. It is a privilege boundary — the agent runs as SYSTEM and the
+// tray as the interactive user — so the pipe is ACL'd and every request is re-validated server-side.
+builder.Services.AddHostedService<TrayIpcServer>();
 
 var host = builder.Build();
 host.Run();

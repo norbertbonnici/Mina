@@ -12,7 +12,7 @@ namespace Mina.EndpointAgent.Session;
 /// closes the protected path (ARCHITECTURE §5). Nothing here can fall back to direct connectivity —
 /// a failure clears the session and the proxy then has nothing to forward through.
 /// </summary>
-public sealed partial class ResearchSessionManager : IAsyncDisposable
+public sealed partial class ResearchSessionManager : ISessionControl, IAsyncDisposable
 {
     private readonly ControlPlaneClient _controlPlane;
     private readonly MinaAgentOptions _options;
@@ -48,9 +48,26 @@ public sealed partial class ResearchSessionManager : IAsyncDisposable
     /// <summary>The live session, or null when the protected path is down.</summary>
     public ActiveSession? Current => Volatile.Read(ref _current);
 
-    /// <summary>Requests a session from the control plane and arms the tunnel.</summary>
-    public async Task<ActiveSession> EstablishAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Explicit so callers holding the concrete manager keep the richer <see cref="ActiveSession"/>,
+    /// while everything reached through <see cref="ISessionControl"/> sees only the four facts it
+    /// is entitled to.
+    /// </summary>
+    IResearchSession? ISessionControl.Current => Current;
+
+    /// <summary>Requests a session in the configured region and arms the tunnel.</summary>
+    public Task<ActiveSession> EstablishAsync(CancellationToken cancellationToken) =>
+        EstablishAsync(_options.Region, cancellationToken);
+
+    /// <summary>
+    /// Requests a session in <paramref name="region"/> and arms the tunnel. The caller chooses the
+    /// region — the tray lets an analyst change it mid-shift — but the control plane decides whether
+    /// that choice is allowed, and refuses the issuance if it is not (AC-008).
+    /// </summary>
+    public async Task<ActiveSession> EstablishAsync(string region, CancellationToken cancellationToken)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(region);
+
         await _mutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -58,7 +75,7 @@ public sealed partial class ResearchSessionManager : IAsyncDisposable
             try
             {
                 var grant = await _controlPlane
-                    .IssueAsync(_options.Region, keyMaterial.CreateCertificateSigningRequest(), cancellationToken)
+                    .IssueAsync(region, keyMaterial.CreateCertificateSigningRequest(), cancellationToken)
                     .ConfigureAwait(false);
 
                 var session = BuildSession(grant, keyMaterial);

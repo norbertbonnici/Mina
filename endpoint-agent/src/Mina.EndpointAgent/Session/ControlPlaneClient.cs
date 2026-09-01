@@ -17,6 +17,23 @@ public sealed record SessionGrantResponse(
     DateTimeOffset LeaseExpiresAt,
     string Mode);
 
+/// <summary>A sensitive-session request as the control plane reports it back to the requester.</summary>
+public sealed record SensitiveRequestResponse(
+    Guid RequestId,
+    Guid SessionId,
+    string RequesterUpn,
+    string JustificationReference,
+    int RequestedMinutes,
+    DateTimeOffset RequestedAt,
+    string State,
+    string? ApproverUpn,
+    DateTimeOffset? ApprovedAt,
+    DateTimeOffset? ExpiresAt,
+    DateTimeOffset? ActivatedAt);
+
+/// <summary>The regions this analyst may select, as decided by the control plane (AC-008).</summary>
+public sealed record SelectableRegionsResponse(IReadOnlyList<string> Regions);
+
 /// <summary>Raised when the control plane refuses or cannot service a session request.</summary>
 public sealed class ControlPlaneException : Exception
 {
@@ -82,6 +99,79 @@ public sealed class ControlPlaneClient(HttpClient httpClient, IAccessTokenProvid
         {
             throw new ControlPlaneException(
                 $"Ending session {sessionId} failed with {(int)response.StatusCode}.", response.StatusCode);
+        }
+    }
+
+    /// <summary>
+    /// The regions the control plane offers this analyst. The agent caches the answer so the tray
+    /// can show a list, but the control plane re-validates the choice on every issuance — the cache
+    /// is a convenience, never the authority.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetSelectableRegionsAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "api/regions");
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new ControlPlaneException(
+                $"The control plane returned {(int)response.StatusCode} for the region list.",
+                response.StatusCode);
+        }
+
+        var payload = await response.Content
+            .ReadFromJsonAsync<SelectableRegionsResponse>(cancellationToken).ConfigureAwait(false);
+
+        return payload?.Regions ?? [];
+    }
+
+    /// <summary>Raises a suppression request against a session this analyst owns (FR-009).</summary>
+    public Task<SensitiveRequestResponse> RequestSensitiveAsync(
+        Guid sessionId, string justificationReference, int minutes, CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"api/sessions/{sessionId}/sensitive")
+        {
+            Content = JsonContent.Create(new { justificationReference, requestedMinutes = minutes }),
+        };
+
+        return SendForSensitiveAsync(request, cancellationToken);
+    }
+
+    /// <summary>Reads the current state of a request, so the tray can follow the decision.</summary>
+    public Task<SensitiveRequestResponse> GetSensitiveAsync(Guid requestId, CancellationToken cancellationToken) =>
+        SendForSensitiveAsync(
+            new HttpRequestMessage(HttpMethod.Get, $"api/sensitive-requests/{requestId}"), cancellationToken);
+
+    /// <summary>
+    /// Starts an approved suppression window. The control plane checks that an approver — someone
+    /// other than the requester — granted it; the agent cannot confer suppression on itself.
+    /// </summary>
+    public Task<SensitiveRequestResponse> ActivateSensitiveAsync(
+        Guid requestId, CancellationToken cancellationToken) =>
+        SendForSensitiveAsync(
+            new HttpRequestMessage(HttpMethod.Post, $"api/sensitive-requests/{requestId}/activate"),
+            cancellationToken);
+
+    /// <summary>Withdraws a request the analyst raised themselves.</summary>
+    public Task<SensitiveRequestResponse> CancelSensitiveAsync(
+        Guid requestId, CancellationToken cancellationToken) =>
+        SendForSensitiveAsync(
+            new HttpRequestMessage(HttpMethod.Delete, $"api/sensitive-requests/{requestId}"), cancellationToken);
+
+    private async Task<SensitiveRequestResponse> SendForSensitiveAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        using (request)
+        {
+            using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new ControlPlaneException(
+                    $"The control plane answered {(int)response.StatusCode}.", response.StatusCode);
+            }
+
+            return await response.Content
+                       .ReadFromJsonAsync<SensitiveRequestResponse>(cancellationToken).ConfigureAwait(false)
+                   ?? throw new ControlPlaneException("The control plane returned an empty request record.");
         }
     }
 
