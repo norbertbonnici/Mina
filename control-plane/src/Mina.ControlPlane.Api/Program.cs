@@ -128,7 +128,13 @@ builder.Services.AddScoped<SessionService>();
 // Sensitive-session (suppression) workflow — ADR-0003. Options bound above.
 builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();
-builder.Services.AddHostedService<SensitiveSessionExpiryService>();
+// Timer-driven work. Both timers run in every process, which was harmless on a single App Service
+// instance and is a decision on an on-premises HA pair — see HostingGuard.RunBackgroundServicesKey.
+var runBackgroundServices = HostingGuard.BackgroundServicesEnabled(builder.Configuration);
+if (runBackgroundServices)
+{
+    builder.Services.AddHostedService<SensitiveSessionExpiryService>();
+}
 
 // Egress-node interface: session allowlist and hostname telemetry ingest (M3-4).
 builder.Services.AddScoped<ITelemetryAuditSink, PersistentTelemetryAuditSink>();
@@ -151,7 +157,10 @@ builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSi
     builder.Configuration["Mina:Audit:ExportPath"]
     ?? Path.Combine(AppContext.BaseDirectory, "audit-exports"),
     builder.Configuration[$"{AuditOptions.Section}:Environment"] ?? "dev"));
-builder.Services.AddHostedService<AuditExportBackgroundService>();
+if (runBackgroundServices)
+{
+    builder.Services.AddHostedService<AuditExportBackgroundService>();
+}
 
 var app = builder.Build();
 
@@ -164,6 +173,11 @@ if (usingInMemoryStore)
 }
 
 StartupLog.UsingDevelopmentCertificateAuthority(app.Logger);
+
+if (!runBackgroundServices)
+{
+    StartupLog.BackgroundServicesDisabled(app.Logger);
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

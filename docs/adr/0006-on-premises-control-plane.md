@@ -108,6 +108,26 @@ disappears from the cost model, replaced by Key Vault and immutable blob storage
 The egress stamp is unchanged and remains the dominant Azure cost. Proxmox capacity, licensing and
 operational effort become FIAU-side costs that COST_MODEL does not attempt to price.
 
+### More than one instance is now a design question
+
+App Service ran one instance, so nothing in the platform had to decide what happens when two copies
+run at once. A Proxmox HA pair runs everything twice, and three things behave differently:
+
+- **The ephemeral development CA is per process.** Two instances would issue session certificates
+  from two different authorities, and an Envoy node trusting one would reject every session issued
+  by the other. The startup guard above already prevents this outside Development, which is another
+  reason the guard is part of this move rather than a later tidy-up.
+- **The audit export is not obviously safe to run twice.** Both instances compute the same range and
+  one loses the write-once race; the loss is logged and swallowed. With a shared sink that is
+  merely wasted work, but with per-instance filesystem sinks it would leave one node's chain
+  permanently unanchored while the host reports healthy — and `/api/audit/verify` would report the
+  other instance's anchors as missing, which reads exactly like tamper evidence. A
+  `Mina:Hosting:RunBackgroundServices` switch lets one instance be designated. It is a blunt
+  instrument: the correct answer is a lease the instances contend for so failover does not depend on
+  an operator moving a setting, and that is backlog M6-10.
+- **The suppression expiry sweep is safe to run twice**, because each approval is expired in its own
+  unit of work and the loser of a race gets a concurrency conflict the sweeper already handles.
+
 ### Configuration delivery becomes a security control
 
 App Service settings and Key Vault references are replaced by configuration on a VM. The control

@@ -70,6 +70,7 @@ suppressed-hostname exposure in the node's own log.
 | M6-6 | Azure immutable-blob audit export sink, replacing the filesystem sink. The seam (`IAuditExportSink`) already exists and the host now refuses to start on the filesystem sink outside Development | D-18, AC-013 | M |
 | M6-7 | Rework AC-017 evidence and the tfsec/policy rule: both currently assert a blanket RFC1918 deny, which the scoped exception makes false. The replacement must assert the permitted set is exactly one host and port | AC-017, TEST_STRATEGY | M |
 | M6-8 | On-premises break-glass. Azure RBAC can stop an egress stamp but cannot touch a Proxmox-hosted API, UI or database, so regaining administrative control when Entra sign-in fails has no mechanism at all on the plane that now matters most | AC-015, M4-5 | M |
+| M6-10 | Replace `Mina:Hosting:RunBackgroundServices` with a lease the control-plane instances contend for, so the expiry sweep and audit export have exactly one owner without an operator having to move a setting during failover | ADR-0006 | M |
 | M6-9 | Operations rework: Proxmox host/cluster failure, on-premises SQL backup and restore, Arc agent failure (which breaks both SQL auth and Key Vault access with no stored credential to fall back on), and tunnel loss as a **control-plane availability** signal for the stamps rather than a telemetry one | OPERATIONS | M |
 
 ## M4 — Production hardening (Phase 4)
