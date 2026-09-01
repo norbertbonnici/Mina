@@ -11,6 +11,7 @@
 
 using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.Audit;
+using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Application.Configuration;
 using Mina.ControlPlane.Application.SensitiveSessions;
 using Mina.ControlPlane.Domain.Regions;
@@ -62,6 +63,11 @@ else
 builder.Services.AddValidatedMinaOptions(builder.Configuration);
 builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
+
+// Expiry terminates a session, and that is a session-lifecycle event (session_revoked, High) as
+// well as a suppression one. Registering the null sink here would repeat the mistake this UI was
+// already caught making with the suppression sink: decisions made in the UI going unrecorded.
+builder.Services.AddScoped<ISessionAuditSink, PersistentSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();
 
 var app = builder.Build();

@@ -110,6 +110,7 @@ public sealed class SensitiveSessionExpirySweepTests : IDisposable
             services.AddScoped<IUnitOfWork, EfUnitOfWork>();
             services.AddScoped<SensitiveSessionService>();
             services.AddSingleton<ISensitiveSessionAuditSink>(Audit);
+            services.AddSingleton<ISessionAuditSink>(NullSessionAuditSink.Instance);
             services.AddSingleton(Options.Create(new SensitiveSessionOptions()));
             services.AddSingleton<TimeProvider>(Clock);
 

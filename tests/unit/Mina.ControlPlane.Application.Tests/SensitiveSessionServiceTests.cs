@@ -273,7 +273,8 @@ public class SensitiveSessionServiceTests
             Sessions.AddAsync(Session, default).GetAwaiter().GetResult();
 
             Service = new SensitiveSessionService(
-                Requests, Sessions, NullSensitiveSessionAuditSink.Instance, new InMemoryUnitOfWork(),
+                Requests, Sessions, NullSensitiveSessionAuditSink.Instance, NullSessionAuditSink.Instance,
+                new InMemoryUnitOfWork(),
                 Options.Create(new SensitiveSessionOptions()), Clock);
         }
 

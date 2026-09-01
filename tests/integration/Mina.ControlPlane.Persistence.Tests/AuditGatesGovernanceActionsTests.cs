@@ -176,13 +176,15 @@ public sealed class AuditGatesGovernanceActionsTests : IDisposable
     private static SensitiveSessionService Service(MinaDbContext context, DateTimeOffset? now = null) =>
         new(new EfSensitiveSessionRepository(context),
             new EfSessionRepository(context),
-            new PersistentSensitiveSessionAuditSink(
-                new AuditWriter(
-                    new EfAuditEventStore(context),
-                    Options.Create(new AuditOptions { Environment = "test" }),
-                    new Fixed(now ?? T0))),
+            new PersistentSensitiveSessionAuditSink(Writer(context, now)),
+            new PersistentSessionAuditSink(Writer(context, now)),
             new EfUnitOfWork(context),
             Options.Create(new SensitiveSessionOptions()),
+            new Fixed(now ?? T0));
+
+    private static AuditWriter Writer(MinaDbContext context, DateTimeOffset? now = null) =>
+        new(new EfAuditEventStore(context),
+            Options.Create(new AuditOptions { Environment = "test" }),
             new Fixed(now ?? T0));
 
     private async Task<SensitiveSessionRequest> SeedRequestAsync(MinaDbContext context)

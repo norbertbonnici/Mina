@@ -51,6 +51,7 @@ public sealed class SensitiveSessionService(
     ISensitiveSessionRepository requests,
     ISessionRepository sessions,
     ISensitiveSessionAuditSink audit,
+    ISessionAuditSink sessionAudit,
     IUnitOfWork unitOfWork,
     IOptions<SensitiveSessionOptions> options,
     TimeProvider clock)
@@ -58,6 +59,8 @@ public sealed class SensitiveSessionService(
     private readonly ISensitiveSessionRepository _requests = requests ?? throw new ArgumentNullException(nameof(requests));
     private readonly ISessionRepository _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
     private readonly ISensitiveSessionAuditSink _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+    private readonly ISessionAuditSink _sessionAudit =
+        sessionAudit ?? throw new ArgumentNullException(nameof(sessionAudit));
     private readonly IUnitOfWork _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
     private readonly SensitiveSessionOptions _options =
         (options ?? throw new ArgumentNullException(nameof(options))).Value;
@@ -284,6 +287,17 @@ public sealed class SensitiveSessionService(
         }
 
         await _audit.ExpiredAsync(request, terminating, cancellationToken).ConfigureAwait(false);
+
+        if (terminating)
+        {
+            // The session's own terminal event as well. `sensitive_expired` records that a session
+            // was terminated, but it is a Notice on the suppression workflow; `session_revoked` is
+            // the High-severity event the session lifecycle defines and the one anything watching
+            // session state is subscribed to. Without this, expiry was the only production path that
+            // revokes a session and it emitted no session_revoked at all — leaving that event, and
+            // its severity, unreachable in the whole system.
+            await _sessionAudit.SessionEndedAsync(session!, cancellationToken).ConfigureAwait(false);
+        }
 
         // Commits anything the audit append did not already flush; with the EF wiring this is a
         // no-op, and with a store that does not share the context it is the commit that counts.

@@ -12,6 +12,17 @@ public static class ClaimsPrincipalExtensions
     private const string ObjectIdClaim = "oid";
     private const string ObjectIdClaimUri = "http://schemas.microsoft.com/identity/claims/objectidentifier";
     private const string DeviceIdClaim = "deviceid";
+
+    /// <summary>
+    /// What <c>deviceid</c> becomes once inbound claim mapping has run. Microsoft.Identity.Web
+    /// validates with claim mapping on by default, and
+    /// <c>JwtSecurityTokenHandler.DefaultInboundClaimTypeMap</c> rewrites <c>deviceid</c>,
+    /// <c>oid</c> and <c>roles</c> to WS-Federation URIs. The object id and roles were already read
+    /// under both names; the device id was not, so under the production pipeline it read as absent
+    /// and every session was refused as not device-bound. Tests never caught it because the test
+    /// authentication handler builds claims with the short names directly.
+    /// </summary>
+    private const string DeviceIdClaimUri = "http://schemas.microsoft.com/2012/01/devicecontext/claims/identifier";
     private const string RolesClaim = "roles";
 
     /// <summary>Conditional Access authentication contexts satisfied for this token.</summary>
@@ -30,7 +41,8 @@ public static class ClaimsPrincipalExtensions
             ?? user.Identity?.Name
             ?? objectId;
 
-        var deviceId = user.FindFirst(DeviceIdClaim)?.Value;
+        var deviceId = user.FindFirst(DeviceIdClaim)?.Value
+            ?? user.FindFirst(DeviceIdClaimUri)?.Value;
 
         var roles = user.FindAll(RolesClaim).Select(c => c.Value)
             .Concat(user.FindAll(ClaimTypes.Role).Select(c => c.Value))

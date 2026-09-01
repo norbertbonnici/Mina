@@ -74,7 +74,22 @@ public sealed class AuditWriter(IAuditEventStore store, IOptions<AuditOptions> o
 
         for (var attempt = 1; attempt <= attempts; attempt++)
         {
-            var tip = await _store.GetTipAsync(cancellationToken).ConfigureAwait(false);
+            AuditChainTip tip;
+            try
+            {
+                tip = await _store.GetTipAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Reading the tip is as much a part of writing the event as the insert is: if the
+                // chain cannot be read, the event was not recorded and the caller must treat that
+                // the same way. Leaving this outside the guard meant a store that could not be read
+                // surfaced as a raw provider exception, which no caller — and none of the tests
+                // asserting the fail-closed property — recognises as an audit failure.
+                throw new AuditWriteException(
+                    $"Could not read the audit chain tip to append '{draft.EventType}'.", ex);
+            }
+
             var auditEvent = AuditEvent.Append(
                 tip.Sequence + 1,
                 tip.Hash,

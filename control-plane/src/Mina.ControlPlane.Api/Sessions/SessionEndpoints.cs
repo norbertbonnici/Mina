@@ -92,7 +92,7 @@ public static class SessionEndpoints
     }
 
     private static async Task<IResult> RenewAsync(
-        Guid id, RenewSessionDto dto, ClaimsPrincipal user, SessionService sessions,
+        Guid id, RenewSessionDto dto, ClaimsPrincipal user, SessionService sessions, MinaMetrics metrics,
         IOptions<SessionServiceOptions> options, CancellationToken ct)
     {
         if (!TryDecodeCsr(dto.CsrPem, out var csr))
@@ -100,11 +100,25 @@ public static class SessionEndpoints
             return Results.Problem("Body must contain a PEM certificate signing request.", statusCode: 400);
         }
 
-        return await ExecuteAsync(options.Value, async () =>
+        try
         {
             var grant = await sessions.RenewAsync(user.ToSessionPrincipal(), id, csr, ct);
             return Results.Ok(ToResponse(grant));
-        });
+        }
+        catch (SessionAuthorizationException ex)
+        {
+            // Renewal is where a device dropping out of compliance actually shows up: the session
+            // was authorised at issue and re-authorised here, up to an hour later. Recording nothing
+            // on this path left that transition invisible to operational telemetry — the failure
+            // mode the runbook tells operators to watch for. The region comes from the stored
+            // session, so there is no client-controlled value in the dimension.
+            metrics.SessionEstablishFailed(region: null, ex.Reason.ToString());
+            return Problem(ex, options.Value);
+        }
+        catch (SessionStateException ex)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status409Conflict);
+        }
     }
 
     private static async Task<IResult> EndAsync(

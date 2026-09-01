@@ -52,6 +52,26 @@ public sealed class SensitiveSessionOptionsValidator : IValidateOptions<Sensitiv
                 + "database when an analyst used it.");
         }
 
+        // The batch sizes are the reason this validator exists at all: both are passed straight to
+        // a repository that refuses a limit below 1, so a zero — a very plausible reading of
+        // "0 means unlimited" — throws on every sweep. The sweeper catches and retries, so the host
+        // stays up and healthy while approvals silently stop expiring: exactly the shape of
+        // misconfiguration this class was added to stop (AC-011).
+        if (options.ExpirySweepBatchSize < 1)
+        {
+            failures.Add(
+                $"Mina:SensitiveSession:ExpirySweepBatchSize is {options.ExpirySweepBatchSize}; it must "
+                + "be at least 1. There is no 'unlimited' value: a non-positive batch stops the expiry "
+                + "sweep entirely, and approvals would outlive their window with the host reporting healthy.");
+        }
+
+        if (options.ApproverQueuePageSize < 1)
+        {
+            failures.Add(
+                $"Mina:SensitiveSession:ApproverQueuePageSize is {options.ApproverQueuePageSize}; it must "
+                + "be at least 1, or the approver queue cannot be read at all.");
+        }
+
         RequireRole(failures, options.ApproverRole, "Mina:SensitiveSession:ApproverRole");
         RequireRole(failures, options.AnalystRole, "Mina:SensitiveSession:AnalystRole");
 
@@ -115,6 +135,19 @@ public sealed class SessionServiceOptionsValidator : IValidateOptions<SessionSer
         if (string.IsNullOrWhiteSpace(options.AnalystRole))
         {
             failures.Add("Mina:Session:AnalystRole must name an app role; an empty role authorises no one.");
+        }
+
+        // Whitespace here is worse than either extreme. The gate is switched on by "is this
+        // non-blank", but matched by an exact ordinal comparison — so " " disables the compliance
+        // check silently, and " c1" arms a gate no token can ever satisfy while the challenge names
+        // an id that does not exist in the tenant. Neither is distinguishable from working.
+        if (options.RequiredAuthContextId.Length != options.RequiredAuthContextId.Trim().Length)
+        {
+            failures.Add(
+                $"Mina:Session:RequiredAuthContextId ('{options.RequiredAuthContextId}') has leading or "
+                + "trailing whitespace. Leave it empty to disable the Conditional Access "
+                + "authentication-context check, or give the exact context id; a padded value arms a "
+                + "gate no token can satisfy.");
         }
 
         return failures.Count == 0

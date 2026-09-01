@@ -86,9 +86,16 @@ exported. That is the local-development default.
   telemetry.
 - `mina_suppression_mismatches_total > 0` — a node is collecting under an approved suppression
   (also a critical audit event; see EVENT_SCHEMAS).
-- `mina_session_establish_failures_total` by `reason` — a spike in `DeviceNotBound`,
-  `AuthenticationContextRequired` (devices failing the Conditional Access compliance policy) or
+- `mina_session_establish_failures_total` by `reason` — a spike in `DeviceNotBound` or
   `RegionNotSelectable` usually means a policy or stamp problem, not user error.
+- `AuthenticationContextRequired` needs a **rate**, not a threshold, and must not be alerted at
+  `> 0`. Once `Mina:Session:RequiredAuthContextId` is set, a claims challenge is a normal step in
+  the protocol: a client whose cached token predates the requirement is challenged once, re-acquires
+  with the claim, and succeeds. Expect roughly one per analyst per token lifetime as a baseline. The
+  signal worth alerting on is a client that is challenged repeatedly without ever succeeding — i.e.
+  challenges rising while `mina_sessions_established_total` does not — which is what a device
+  failing the compliance policy actually looks like. Each challenge is also an `authz_denied` audit
+  event, so the same caveat applies to anyone reading the audit chain: a challenge is not a refusal.
 - Session establishment p95 latency, and control-plane request duration, against the SLOs in
   `docs/OPERATIONS.md`.
 

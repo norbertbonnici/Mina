@@ -156,6 +156,13 @@ Endpoint enforcement design (variant C2, recommended):
   way the `deviceid` check is not: delete, mis-scope or add an exclusion to the policy and the claim
   stops arriving and sessions stop being issued.
 
+  A challenge is a protocol step, not a refusal, and it is recorded as an `authz_denied` audit event
+  with reason `AuthenticationContextRequired` like any other denial. Operators and anyone reading
+  the trail should expect a baseline of these once the requirement is on: a device that cannot
+  comply shows up as challenges that never convert into an established session, not as the presence
+  of challenges. Over-recording is the deliberate direction for the audit trail, so the event is
+  kept rather than suppressed.
+
   **Deployment prerequisite.** The setting is empty by default because it has a tenant-side
   precondition (the auth context and the policy bound to it, backlog M2-1). Setting it before that
   exists refuses every session — the safe direction, but a deployment step rather than a default.
