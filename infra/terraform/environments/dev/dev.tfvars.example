@@ -26,3 +26,11 @@ node_image_version = "24.04.202508190"
 # these. Get this wrong and the control plane cannot sign certificates or write audit anchors;
 # leave it open and anyone can try.
 control_plane_egress_cidrs = ["203.0.113.20/32"]
+
+# --- Diagnostics ---------------------------------------------------------------------------
+# Export the subscription Activity Log to the diagnostics workspace. This is what records someone
+# deleting the audit storage account or removing its immutability policy — data-plane logging does
+# not. Needs subscription-level rights. Leave false if the organisation already exports centrally
+# to a workspace outside this subscription, which is better: it does not share a blast radius with
+# what it watches.
+export_activity_log = false

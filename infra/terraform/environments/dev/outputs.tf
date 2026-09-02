@@ -22,3 +22,8 @@ output "audit_anchors_are_immutable" {
   description = "False in dev: the immutability policy is Unlocked, so anchors are not tamper-evident."
   value       = module.control_plane_azure.audit_immutability_state == "Locked"
 }
+
+output "activity_log_exported" {
+  description = "Whether ARM operations against this subscription are being recorded (M6-13)."
+  value       = module.activity_log.enabled
+}

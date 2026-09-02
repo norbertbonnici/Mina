@@ -49,3 +49,13 @@ module "egress_stamp" {
     envoy_sha256  = var.envoy_sha256
   })
 }
+
+# ARM operations against the subscription — including anything that would remove the audit anchors
+# or the immutability policy protecting them (M6-13). Off unless enabled: it is subscription-wide,
+# needs subscription-level rights, and many organisations already export the Activity Log centrally.
+module "activity_log" {
+  source = "../../modules/azure-activity-log"
+
+  enabled                    = var.export_activity_log
+  log_analytics_workspace_id = module.control_plane_azure.diagnostics_workspace_id
+}

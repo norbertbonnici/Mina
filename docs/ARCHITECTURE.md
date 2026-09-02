@@ -330,7 +330,7 @@ naming `rg-mina-<plane>-<env>[-<region>]`.
 | Resource group `rg-mina-<env>-cp` | |
 | Key Vault (RBAC, purge protection) | Internal CA key (non-exportable). Premium/HSM in production; reached outbound from the Arc-enabled hosts |
 | Storage account (immutable/WORM container) | Periodic signed audit export for tamper evidence. Locked immutability in production — Unlocked anchors nothing |
-| Log Analytics workspace | CA key use (Key Vault AuditEvent) and audit-anchor access (StorageRead/Write/Delete); Entra/Azure activity export for break-glass alerting |
+| Log Analytics workspace | CA key use (Key Vault AuditEvent) and audit-anchor access (StorageRead/Write/Delete); optional subscription Activity Log export for the ARM operations that would remove tamper evidence. **It currently sits in the subscription it watches**, so it shares a blast radius with the resources it protects — moving it to a separate subscription is a production gate (M6-15) |
 
 **Egress stamp (per approved region, per env):**
 

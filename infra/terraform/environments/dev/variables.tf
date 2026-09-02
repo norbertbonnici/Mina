@@ -60,3 +60,16 @@ variable "envoy_sha256" {
     error_message = "envoy_sha256 must be a 64-character lowercase hex SHA-256 digest."
   }
 }
+
+variable "export_activity_log" {
+  description = <<-EOT
+    Export the subscription's Activity Log to the diagnostics workspace (M6-13). Needs rights at the
+    subscription, not just the resource group.
+
+    Leave false if the organisation already exports the Activity Log centrally — a central export to
+    a workspace outside this subscription is strictly better than this one, because it does not
+    share a blast radius with the resources it watches.
+  EOT
+  type        = bool
+  default     = false
+}
