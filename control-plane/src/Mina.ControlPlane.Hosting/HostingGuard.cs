@@ -43,34 +43,6 @@ public static class HostingGuard
     /// <summary>Number of reverse proxies in front of this host, for forwarded-header processing.</summary>
     public const string ForwardedProxyCountKey = "Mina:Hosting:ForwardedProxyCount";
 
-    /// <summary>
-    /// Whether this instance runs the timer-driven background work — the suppression expiry sweep
-    /// and the audit export.
-    /// </summary>
-    /// <remarks>
-    /// On App Service this question did not arise: one instance ran, and both timers with it. An
-    /// on-premises HA pair runs every process twice, and the two timers behave differently under
-    /// duplication. The expiry sweep is safe — each approval is expired in its own unit of work and
-    /// the loser of a race gets a concurrency conflict it already handles. The audit export is not
-    /// obviously safe: two instances compute the same range, render the same bytes, and one loses
-    /// the write-once race; that loss is logged as a warning and swallowed, so a misconfiguration
-    /// in which the instances do not share an export sink would leave one node's chain permanently
-    /// unanchored while the host reports healthy.
-    ///
-    /// This switch is the blunt answer — designate one instance — and it is deliberately blunt. The
-    /// correct answer is a lease the instances contend for, so that failover does not depend on an
-    /// operator remembering to move a setting; that is backlog M4-23. Until then, leaving this true
-    /// everywhere is safe only because the shared sink makes the race benign, and that is exactly
-    /// the assumption an operator should have to make explicitly.
-    /// </remarks>
-    public const string RunBackgroundServicesKey = "Mina:Hosting:RunBackgroundServices";
-
-    public static bool BackgroundServicesEnabled(IConfiguration configuration)
-    {
-        ArgumentNullException.ThrowIfNull(configuration);
-        return configuration.GetValue(RunBackgroundServicesKey, defaultValue: true);
-    }
-
     public static bool DevelopmentFallbacksAllowed(IConfiguration configuration, IHostEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(configuration);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Mina.ControlPlane.Domain.Audit;
+using Mina.ControlPlane.Domain.Coordination;
 using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
@@ -26,6 +27,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISensitiveSessionRepository, EfSensitiveSessionRepository>();
         services.AddScoped<IAuditEventStore, EfAuditEventStore>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        services.AddScoped<IBackgroundLeaseStore, EfBackgroundLeaseStore>();
         return services.AddScoped<ITelemetryRepository, EfTelemetryRepository>();
     }
 }

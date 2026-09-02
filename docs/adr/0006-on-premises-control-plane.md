@@ -138,8 +138,11 @@ Proxmox HA pair runs everything twice, and three things behave differently:
   one loses the write-once race; the loss is logged and swallowed. With a shared sink that is wasted
   work, but with per-instance filesystem sinks it would leave one node's chain permanently unanchored
   while the host reports healthy — and `/api/audit/verify` would report the other instance's anchors
-  as missing, which reads exactly like tamper evidence. `Mina:Hosting:RunBackgroundServices`
-  designates one instance; the correct answer is a contended lease, backlog M4-23.
+  as missing, which reads exactly like tamper evidence. Resolved by M4-23: a lease in the database
+  decides which instance exports, taken and renewed under optimistic concurrency, so a failed
+  instance loses the work by ceasing to renew rather than by an operator noticing. The expiry
+  sweeps are deliberately *not* leased — they are safe duplicated, and expiring suppression on time
+  (AC-011) must not depend on a lease being readable.
 - **The suppression expiry sweep is safe duplicated**, because each approval expires in its own unit
   of work and the loser of a race gets a concurrency conflict the sweeper already handles.
 

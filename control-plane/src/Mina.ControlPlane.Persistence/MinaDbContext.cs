@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Mina.ControlPlane.Domain.Audit;
+using Mina.ControlPlane.Domain.Coordination;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Domain.Telemetry;
@@ -31,6 +32,9 @@ public sealed class MinaDbContext(DbContextOptions<MinaDbContext> options) : DbC
     public DbSet<HostnameObservation> Hostnames => Set<HostnameObservation>();
 
     public DbSet<SuppressedTrafficSummary> SuppressedTraffic => Set<SuppressedTrafficSummary>();
+
+    /// <summary>Which instance owns each piece of singleton background work (M4-23).</summary>
+    public DbSet<BackgroundLease> BackgroundLeases => Set<BackgroundLease>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

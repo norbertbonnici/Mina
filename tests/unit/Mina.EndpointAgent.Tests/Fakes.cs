@@ -107,19 +107,33 @@ internal sealed class StubControlPlane : HttpMessageHandler
 /// <summary>A control that records what it was handed and answers with a canned response.</summary>
 internal sealed class RecordingTrayControl : ITrayControl
 {
+    // The agent serves several pipe instances at once, so this is called concurrently. A plain
+    // List would drop or corrupt entries under that, which showed up as a test that failed only
+    // when the whole suite was competing for CPU.
+    private readonly Lock _gate = new();
     private readonly List<TrayRequest> _seen = [];
+    private string? _lastClientIdentity;
 
-    public IReadOnlyList<TrayRequest> Seen => _seen;
+    public IReadOnlyList<TrayRequest> Seen
+    {
+        get { lock (_gate) { return [.. _seen]; } }
+    }
 
-    public string? LastClientIdentity { get; private set; }
+    public string? LastClientIdentity
+    {
+        get { lock (_gate) { return _lastClientIdentity; } }
+    }
 
     public Func<TrayRequest, TrayResponse>? Respond { get; set; }
 
     public Task<TrayResponse> ExecuteAsync(
         TrayRequest request, string? clientIdentity, CancellationToken cancellationToken)
     {
-        _seen.Add(request);
-        LastClientIdentity = clientIdentity;
+        lock (_gate)
+        {
+            _seen.Add(request);
+            _lastClientIdentity = clientIdentity;
+        }
 
         var response = Respond?.Invoke(request)
                        ?? TrayResponse.Success(new AgentStatusDto { State = ProtectedPathStates.Protected });

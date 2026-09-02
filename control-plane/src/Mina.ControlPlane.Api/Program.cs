@@ -23,6 +23,7 @@ using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Application.Telemetry;
 using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.Audit;
+using Mina.ControlPlane.Domain.Coordination;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
@@ -89,6 +90,7 @@ if (usingInMemoryStore)
     builder.Services.AddSingleton<ITelemetryRepository, InMemoryTelemetryRepository>();
     builder.Services.AddSingleton<InMemoryAuditEventStore>();
     builder.Services.AddSingleton<IUnitOfWork, InMemoryUnitOfWork>();
+    builder.Services.AddSingleton<IBackgroundLeaseStore, AlwaysGrantedLeaseStore>();
     builder.Services.AddSingleton<IAuditEventStore>(sp => new LoggingAuditEventStore(
         sp.GetRequiredService<InMemoryAuditEventStore>(),
         sp.GetRequiredService<ILogger<LoggingAuditEventStore>>()));
@@ -139,14 +141,12 @@ builder.Services.AddScoped<SessionService>();
 // Sensitive-session (suppression) workflow — ADR-0003. Options bound above.
 builder.Services.AddScoped<ISensitiveSessionAuditSink, PersistentSensitiveSessionAuditSink>();
 builder.Services.AddScoped<SensitiveSessionService>();
-// Timer-driven work. Both timers run in every process, which was harmless on a single App Service
-// instance and is a decision on an on-premises HA pair — see HostingGuard.RunBackgroundServicesKey.
-var runBackgroundServices = HostingGuard.BackgroundServicesEnabled(builder.Configuration);
-if (runBackgroundServices)
-{
-    builder.Services.AddHostedService<SensitiveSessionExpiryService>();
-    builder.Services.AddHostedService<SessionExpiryService>();
-}
+// Timer-driven work. Every instance runs the two expiry sweeps: both are safe duplicated, because
+// each item is handled in its own unit of work and the loser of a race gets a concurrency conflict
+// it already handles. Deliberately not gated on a lease — expiring suppression on time is AC-011,
+// and it must not stop because a lease could not be read.
+builder.Services.AddHostedService<SensitiveSessionExpiryService>();
+builder.Services.AddHostedService<SessionExpiryService>();
 
 // Egress-node interface: session allowlist and hostname telemetry ingest (M3-4).
 builder.Services.AddScoped<ITelemetryAuditSink, PersistentTelemetryAuditSink>();
@@ -169,10 +169,9 @@ builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSi
     builder.Configuration["Mina:Audit:ExportPath"]
     ?? Path.Combine(AppContext.BaseDirectory, "audit-exports"),
     builder.Configuration[$"{AuditOptions.Section}:Environment"] ?? "dev"));
-if (runBackgroundServices)
-{
-    builder.Services.AddHostedService<AuditExportBackgroundService>();
-}
+// The export is the one that is not safe duplicated, so it takes a lease (M4-23). It runs in every
+// instance; only the lease holder does the work.
+builder.Services.AddHostedService<AuditExportBackgroundService>();
 
 var app = builder.Build();
 
@@ -186,10 +185,6 @@ if (usingInMemoryStore)
 
 StartupLog.UsingDevelopmentCertificateAuthority(app.Logger);
 
-if (!runBackgroundServices)
-{
-    StartupLog.BackgroundServicesDisabled(app.Logger);
-}
 
 // Routing first so the endpoint's listener metadata is known; the separation check before
 // authentication so a request on the wrong listener gets a plain 404 rather than a challenge.
