@@ -32,7 +32,7 @@ public sealed class TrayIpcServerTests
     // schedule on a loaded Windows runner) without crossing that ceiling. Not used by the one test
     // that specifically asserts the *production* (2s) connect timeout's fast-detection behaviour —
     // that test keeps the default.
-    private static readonly TimeSpan ConnectPatience = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ConnectPatience = TimeSpan.FromSeconds(14);
 
     private static (TrayIpcServer Server, RecordingTrayControl Control, string PipeName) Build(
         Action<RecordingTrayControl>? configure = null)
