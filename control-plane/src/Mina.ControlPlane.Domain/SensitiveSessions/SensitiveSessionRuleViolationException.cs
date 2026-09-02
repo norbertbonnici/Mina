@@ -12,6 +12,13 @@ public enum SensitiveSessionRule
     SelfApprovalForbidden,
     NotRequester,
     ApprovalWindowElapsed,
+
+    /// <summary>
+    /// The session already has a request awaiting a decision. One at a time: nothing else caps how
+    /// many requests an analyst may raise, and the approver queue is where volume from one analyst
+    /// buries another's.
+    /// </summary>
+    RequestAlreadyPending,
 }
 
 /// <summary>Thrown when a sensitive-session operation violates an ADR-0003 governance rule.</summary>

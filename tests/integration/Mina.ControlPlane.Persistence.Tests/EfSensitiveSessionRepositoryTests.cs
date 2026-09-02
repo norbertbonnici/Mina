@@ -95,7 +95,7 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
         }
 
         await using var verify = _db.CreateContext();
-        var pending = await new EfSensitiveSessionRepository(verify).ListPendingAsync(100, default);
+        var pending = await new EfSensitiveSessionRepository(verify).ListPendingAsync(0, 100, default);
 
         var references = pending.Requests.Select(r => r.JustificationReference).ToList();
         Assert.DoesNotContain("CASE-DECIDED", references);
@@ -198,7 +198,7 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
         await using var verify = db.CreateContext();
         var repo = new EfSensitiveSessionRepository(verify);
 
-        var page = await repo.ListPendingAsync(3, default);
+        var page = await repo.ListPendingAsync(0, 3, default);
         Assert.Equal(3, page.Requests.Count);
         Assert.True(page.HasMore);
 
@@ -207,7 +207,7 @@ public sealed class EfSensitiveSessionRepositoryTests(SqliteDatabaseFixture db) 
             ["CASE-PAGE-0", "CASE-PAGE-1", "CASE-PAGE-2"],
             page.Requests.Select(r => r.JustificationReference));
 
-        var whole = await repo.ListPendingAsync(50, default);
+        var whole = await repo.ListPendingAsync(0, 50, default);
         Assert.False(whole.HasMore);
         Assert.Equal(await repo.CountPendingAsync(default), whole.Requests.Count);
     }

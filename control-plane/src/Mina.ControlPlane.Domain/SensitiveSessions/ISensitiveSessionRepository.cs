@@ -25,7 +25,19 @@ public interface ISensitiveSessionRepository
     /// a full page from a truncated one — a queue that silently stops at N would let a flood push a
     /// genuine request out of sight of the approver, which is worse than the memory problem.
     /// </param>
-    Task<PendingRequestPage> ListPendingAsync(int limit, CancellationToken cancellationToken);
+    /// <param name="offset">
+    /// Rows to skip. Truncation was reported before paging existed, which told an approver there
+    /// was more without giving them any way to reach it — so a queue long enough to truncate could
+    /// hide a request indefinitely.
+    /// </param>
+    Task<PendingRequestPage> ListPendingAsync(int offset, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether the session already has a request awaiting a decision. Used to refuse a second one:
+    /// nothing caps how many requests an analyst may raise, and the approver queue is the one place
+    /// where volume from one analyst can bury another's.
+    /// </summary>
+    Task<bool> HasUndecidedRequestAsync(Guid sessionId, CancellationToken cancellationToken);
 
     /// <summary>How many requests are awaiting a decision. A count, not a materialised list.</summary>
     Task<int> CountPendingAsync(CancellationToken cancellationToken);

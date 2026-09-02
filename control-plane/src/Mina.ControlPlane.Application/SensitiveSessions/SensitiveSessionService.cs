@@ -10,7 +10,9 @@ namespace Mina.ControlPlane.Application.SensitiveSessions;
 /// A page of the approver queue. <paramref name="HasMore"/> exists so a flood cannot quietly push a
 /// genuine request off the end of what an approver is shown.
 /// </summary>
-public sealed record PendingApprovals(IReadOnlyList<SensitiveSessionView> Requests, bool HasMore);
+/// <param name="Offset">Rows skipped, so a caller can render position and page onward.</param>
+public sealed record PendingApprovals(
+    IReadOnlyList<SensitiveSessionView> Requests, bool HasMore, int Offset = 0);
 
 /// <summary>Policy for the sensitive-session workflow.</summary>
 public sealed class SensitiveSessionOptions
@@ -95,6 +97,18 @@ public sealed class SensitiveSessionService(
             throw new SensitiveSessionAuthorizationException(
                 SensitiveSessionDenialReason.SessionNotUsable,
                 "Suppression can only be requested for a live session.");
+        }
+
+        // One undecided request per session. Nothing else bounds how many an analyst may raise, and
+        // the approver queue is the single place where one analyst's volume can bury another's — a
+        // flood does not gain the flooder anything, but it can push a colleague's genuine request
+        // out of the page an approver reads. Refusing here is cheaper than any quota, and it costs a
+        // legitimate analyst nothing: they already have a request pending on this session.
+        if (await _requests.HasUndecidedRequestAsync(sessionId, cancellationToken).ConfigureAwait(false))
+        {
+            throw new SensitiveSessionRuleViolationException(
+                SensitiveSessionRule.RequestAlreadyPending,
+                "This session already has a suppression request awaiting a decision.");
         }
 
         var request = SensitiveSessionRequest.Create(
@@ -209,17 +223,20 @@ public sealed class SensitiveSessionService(
         return SensitiveSessionView.From(request);
     }
 
-    /// <summary>The approver queue, bounded, and honest about being bounded.</summary>
+    /// <summary>The approver queue: bounded, pageable, and honest about being bounded.</summary>
     public async Task<PendingApprovals> ListPendingAsync(
-        SessionPrincipal principal, CancellationToken cancellationToken)
+        SessionPrincipal principal, CancellationToken cancellationToken, int offset = 0)
     {
         ArgumentNullException.ThrowIfNull(principal);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
         RequireRole(principal, _options.ApproverRole);
 
         var page = await _requests
-            .ListPendingAsync(_options.ApproverQueuePageSize, cancellationToken).ConfigureAwait(false);
+            .ListPendingAsync(offset, _options.ApproverQueuePageSize, cancellationToken)
+            .ConfigureAwait(false);
 
-        return new PendingApprovals([.. page.Requests.Select(SensitiveSessionView.From)], page.HasMore);
+        return new PendingApprovals(
+            [.. page.Requests.Select(SensitiveSessionView.From)], page.HasMore, offset);
     }
 
     /// <summary>How many requests are waiting, for a dashboard that needs the number and not the rows.</summary>

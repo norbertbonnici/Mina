@@ -35,15 +35,24 @@ public sealed class EfSensitiveSessionRepository(MinaDbContext context) : ISensi
         await _context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<PendingRequestPage> ListPendingAsync(int limit, CancellationToken cancellationToken)
+    public async Task<bool> HasUndecidedRequestAsync(Guid sessionId, CancellationToken cancellationToken) =>
+        await _context.SensitiveSessionRequests
+            .AnyAsync(r => r.SessionId == sessionId && r.State == SensitiveSessionState.Requested,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<PendingRequestPage> ListPendingAsync(
+        int offset, int limit, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
 
         // One more than asked for, so "there is more" is known without a second COUNT. The
         // (State, RequestedAt) index makes this a seek rather than a scan.
         var page = await _context.SensitiveSessionRequests
             .Where(r => r.State == SensitiveSessionState.Requested)
             .OrderBy(r => r.RequestedAt)
+            .Skip(offset)
             .Take(limit + 1)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 

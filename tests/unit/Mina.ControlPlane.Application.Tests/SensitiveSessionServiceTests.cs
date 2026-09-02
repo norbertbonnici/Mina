@@ -174,7 +174,8 @@ public class SensitiveSessionServiceTests
     {
         var h = new Harness();
         var first = await h.RequestAsync("CASE-1");
-        var second = await h.RequestAsync("CASE-2");
+        // A second session: one session may only carry one undecided request.
+        var second = await h.RequestOnNewSessionAsync("CASE-2");
         await h.Service.DenyAsync(h.Approver, first.RequestId, default);
 
         var pending = await h.Service.ListPendingAsync(h.Approver, default);
@@ -317,9 +318,61 @@ public class SensitiveSessionServiceTests
         Assert.Equal(SessionMode.Normal, h.Session.Mode);
     }
 
+    [Fact]
+    public async Task A_session_may_have_only_one_undecided_request_at_a_time()
+    {
+        // Nothing else bounds how many requests an analyst can raise, and the approver queue is the
+        // one place where one analyst's volume buries another's. A flood gains the flooder nothing
+        // but can push a colleague's genuine request past the page an approver reads.
+        var h = new Harness();
+        await h.RequestAsync("CASE-1");
+
+        var ex = await Assert.ThrowsAsync<SensitiveSessionRuleViolationException>(
+            () => h.RequestAsync("CASE-2"));
+        Assert.Equal(SensitiveSessionRule.RequestAlreadyPending, ex.Rule);
+
+        // Once decided, the analyst may ask again — the rule is one *undecided* request, not one
+        // request ever. Denial is a normal outcome and must not lock them out of asking.
+        var pending = (await h.Service.ListPendingAsync(h.Approver, default)).Requests.Single();
+        await h.Service.DenyAsync(h.Approver, pending.RequestId, default);
+
+        var second = await h.RequestAsync("CASE-3");
+        Assert.Equal(SensitiveSessionState.Requested, second.State);
+    }
+
+    [Fact]
+    public async Task The_approver_queue_can_be_paged_past_the_first_screen()
+    {
+        // Truncation was reported before paging existed, which told an approver there was more
+        // without giving them any way to reach it.
+        var h = new Harness(queuePageSize: 2);
+        var ids = new List<Guid>();
+        for (var i = 0; i < 5; i++)
+        {
+            // One undecided request per session, so each needs its own session — and each needs a
+            // distinct RequestedAt, or "oldest first" has nothing to order by and the assertion
+            // would depend on dictionary iteration order.
+            ids.Add((await h.RequestOnNewSessionAsync($"CASE-{i}")).RequestId);
+            h.Clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        var first = await h.Service.ListPendingAsync(h.Approver, default);
+        Assert.Equal(ids.Take(2), first.Requests.Select(r => r.RequestId));
+        Assert.True(first.HasMore);
+
+        var second = await h.Service.ListPendingAsync(h.Approver, default, offset: 2);
+        Assert.Equal(ids.Skip(2).Take(2), second.Requests.Select(r => r.RequestId));
+        Assert.True(second.HasMore);
+        Assert.Equal(2, second.Offset);
+
+        var last = await h.Service.ListPendingAsync(h.Approver, default, offset: 4);
+        Assert.Equal(ids.Skip(4), last.Requests.Select(r => r.RequestId));
+        Assert.False(last.HasMore);
+    }
+
     private sealed class Harness
     {
-        public Harness()
+        public Harness(int queuePageSize = 100)
         {
             Session = ResearchSession.Issue(
                 SessionId, "oid-analyst", "analyst@fiaumalta.org", "device-1", "westeurope",
@@ -329,7 +382,25 @@ public class SensitiveSessionServiceTests
             Service = new SensitiveSessionService(
                 Requests, Sessions, NullSensitiveSessionAuditSink.Instance, NullSessionAuditSink.Instance,
                 new InMemoryUnitOfWork(),
-                Options.Create(new SensitiveSessionOptions()), Clock);
+                Options.Create(new SensitiveSessionOptions { ApproverQueuePageSize = queuePageSize }),
+                Clock);
+        }
+
+        /// <summary>
+        /// A request on a session of its own. Needed wherever a test wants several undecided
+        /// requests at once, since one session may only have one.
+        /// </summary>
+        public async Task<SensitiveSessionView> RequestOnNewSessionAsync(string reference)
+        {
+            var sessionId = Guid.NewGuid();
+            await Sessions.AddAsync(
+                ResearchSession.Issue(
+                    sessionId, Analyst.UserObjectId, Analyst.UserPrincipalName, "device-1", "westeurope",
+                    Clock.GetUtcNow(), TimeSpan.FromHours(8), $"SERIAL-{sessionId:N}"),
+                default);
+
+            return await Service.RequestAsync(
+                Analyst, sessionId, reference, TimeSpan.FromHours(2), default);
         }
 
         public Guid SessionId { get; } = Guid.NewGuid();
@@ -425,11 +496,17 @@ public class SensitiveSessionServiceTests
             return Task.CompletedTask;
         }
 
-        public Task<PendingRequestPage> ListPendingAsync(int limit, CancellationToken cancellationToken)
+        public Task<bool> HasUndecidedRequestAsync(Guid sessionId, CancellationToken cancellationToken) =>
+            Task.FromResult(_store.Values.Any(
+                r => r.SessionId == sessionId && r.State == SensitiveSessionState.Requested));
+
+        public Task<PendingRequestPage> ListPendingAsync(
+            int offset, int limit, CancellationToken cancellationToken)
         {
             var page = _store.Values
                 .Where(r => r.State == SensitiveSessionState.Requested)
                 .OrderBy(r => r.RequestedAt)
+                .Skip(offset)
                 .Take(limit + 1)
                 .ToList();
 

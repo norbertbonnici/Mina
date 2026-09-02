@@ -31,7 +31,8 @@ public sealed record SensitiveSessionDto(
 /// self-approval.
 /// </summary>
 /// <summary>The approver queue as returned to a client, with whether it was truncated.</summary>
-public sealed record PendingApprovalsDto(IReadOnlyList<SensitiveSessionDto> Requests, bool HasMore);
+public sealed record PendingApprovalsDto(
+    IReadOnlyList<SensitiveSessionDto> Requests, bool HasMore, int Offset);
 
 public static class SensitiveSessionEndpoints
 {
@@ -94,15 +95,16 @@ public static class SensitiveSessionEndpoints
         ExecuteAsync(async () => Results.Ok(ToDto(await service.GetAsync(user.ToSessionPrincipal(), id, ct))));
 
     private static Task<IResult> ListPendingAsync(
-        ClaimsPrincipal user, SensitiveSessionService service, CancellationToken ct) =>
+        ClaimsPrincipal user, SensitiveSessionService service, int? offset, CancellationToken ct) =>
         ExecuteAsync(async () =>
         {
-            var pending = await service.ListPendingAsync(user.ToSessionPrincipal(), ct);
+            var pending = await service.ListPendingAsync(
+                user.ToSessionPrincipal(), ct, Math.Max(0, offset ?? 0));
 
             // hasMore, not a bare array: a client that cannot tell a full queue from a truncated
             // one will present a partial queue as the whole of it.
             return Results.Ok(new PendingApprovalsDto(
-                [.. pending.Requests.Select(ToDto)], pending.HasMore));
+                [.. pending.Requests.Select(ToDto)], pending.HasMore, pending.Offset));
         });
 
     private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)
@@ -129,6 +131,11 @@ public static class SensitiveSessionEndpoints
         {
             return ex.Rule switch
             {
+                // The session already has a request awaiting a decision. The caller's situation,
+                // not a malformed request: 409 tells them to wait for or withdraw the existing one.
+                SensitiveSessionRule.RequestAlreadyPending =>
+                    Results.Problem(ex.Message, statusCode: StatusCodes.Status409Conflict),
+
                 // Self-approval and acting on someone else's request are authorisation failures.
                 SensitiveSessionRule.SelfApprovalForbidden or SensitiveSessionRule.NotRequester =>
                     Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden),

@@ -29,12 +29,19 @@ public sealed class InMemorySensitiveSessionRepository : ISensitiveSessionReposi
         return Task.CompletedTask;
     }
 
-    public Task<PendingRequestPage> ListPendingAsync(int limit, CancellationToken cancellationToken)
+    public Task<bool> HasUndecidedRequestAsync(Guid sessionId, CancellationToken cancellationToken) =>
+        Task.FromResult(_requests.Values.Any(
+            r => r.SessionId == sessionId && r.State == SensitiveSessionState.Requested));
+
+    public Task<PendingRequestPage> ListPendingAsync(
+        int offset, int limit, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
         var page = _requests.Values
             .Where(r => r.State == SensitiveSessionState.Requested)
             .OrderBy(r => r.RequestedAt)
+            .Skip(offset)
             .Take(limit + 1)
             .ToList();
 

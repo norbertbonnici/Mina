@@ -21,11 +21,18 @@ else if (!string.IsNullOrEmpty(Done))
     <div class="notice">@Done</div>
 }
 
-@if (_truncated)
+@if (_truncated || _offset > 0)
 {
     <div class="banner">
-        More requests are waiting than fit on this page. The oldest are shown first; decide or deny
-        some to see the rest.
+        Showing requests from position @(_offset + 1), oldest first.
+        @if (_offset > 0)
+        {
+            <a href="/approvals?offset=@(Math.Max(0, _offset - PageSize))">Previous</a>
+        }
+        @if (_truncated)
+        {
+            <a href="/approvals?offset=@(_offset + PageSize)">Next</a>
+        }
     </div>
 }
 
@@ -86,8 +93,16 @@ else
 @code {
     private const int MaxMinutes = 240;
 
+    // Mirrors Mina:SensitiveSession:ApproverQueuePageSize. Only the link arithmetic uses it; the
+    // server decides how many rows come back, so a mismatch shifts the links, never the data.
+    private const int PageSize = 100;
+
     private IReadOnlyList<SensitiveSessionView>? _pending;
     private bool _truncated;
+    private int _offset;
+
+    [SupplyParameterFromQuery(Name = "offset")]
+    private int? Offset { get; set; }
 
     [SupplyParameterFromQuery(Name = "error")]
     private string? Error { get; set; }
@@ -98,7 +113,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         var user = (await AuthState.GetAuthenticationStateAsync()).User;
-        var queue = await Requests.ListPendingAsync(user.ToSessionPrincipal(), CancellationToken.None);
+        _offset = Math.Max(0, Offset ?? 0);
+        var queue = await Requests.ListPendingAsync(user.ToSessionPrincipal(), CancellationToken.None, _offset);
         _pending = queue.Requests;
         _truncated = queue.HasMore;
     }
