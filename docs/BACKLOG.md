@@ -60,6 +60,14 @@ suppressed-hostname exposure in the node's own log.
 
 ## M6 — On-premises move (ADR-0006, added 2026-09-01)
 
+**Where this milestone came from.** M0–M5 are the Phase 0 backlog the project owner reviewed. M6 is
+not: it was created on 2026-09-01 when ADR-0006 moved the control plane to the FIAU Proxmox cluster,
+because that decision produced work — Proxmox provisioning, listener separation, Arc onboarding —
+that belongs to no existing milestone. Rows M6-10 onward were appended as later work surfaced them,
+several of them from a Trivy scan and from verifying earlier claims. The IDs are a working
+convention introduced during implementation, not part of the reviewed plan, and they map to
+`docs/IMPLEMENTATION_PLAN.md` "Phase 3b".
+
 | ID | Story | Refs | Size |
 |---|---|---|---|
 | M6-1 | Publish the node-facing endpoint from the FIAU DMZ: reverse proxy, public-CA TLS certificate, rate limiting, and monitoring to the standard any published FIAU service gets. Optionally source-restrict to the egress stamps' NAT prefixes, which are static and already known to the platform (cf. D-07) | ADR-0006 | M |
@@ -70,13 +78,13 @@ suppressed-hostname exposure in the node's own log.
 | M6-6 | Azure immutable-blob audit export sink, replacing the filesystem sink. The seam (`IAuditExportSink`) already exists and the host now refuses to start on the filesystem sink outside Development | D-18, AC-013 | M |
 | M6-7 | Confirm AC-017 evidence still passes unchanged. ADR-0006 keeps the blanket RFC1918 deny, so the existing assertion and the tfsec rule stay as they are — this is a check that the move did not quietly widen the egress stamps' reachable set, not a rewrite | AC-017, TEST_STRATEGY | S |
 | M6-8 | On-premises break-glass. Azure RBAC can stop an egress stamp but cannot touch a Proxmox-hosted API, UI or database, so regaining administrative control when Entra sign-in fails has no mechanism at all on the plane that now matters most | AC-015, M4-5 | M |
+| M6-9 | Operations rework: Proxmox host/cluster failure, on-premises SQL backup and restore, Arc agent failure (which breaks both SQL auth and Key Vault access with no stored credential to fall back on), and loss of the published DMZ endpoint as a **control-plane availability** signal for the stamps — nodes cannot pull allowlists or ship telemetry, and sessions stop renewing within one lease period. The Check Point tunnel drops out of Mina's dependency set entirely | OPERATIONS | M |
+| M6-10 | Replace `Mina:Hosting:RunBackgroundServices` with a lease the control-plane instances contend for, so the expiry sweep and audit export have exactly one owner without an operator having to move a setting during failover | ADR-0006 | M |
 | M6-11 | Log access to the CA signing key and the audit anchors — **done 2026-09-02**: a Log Analytics workspace (which ARCHITECTURE §11 already required for break-glass alerting, and COST_MODEL carries — my earlier note that it did not was wrong) now receives Key Vault `AuditEvent` and blob `StorageRead`/`StorageWrite`/`StorageDelete`. The Key Vault half turned out to matter more than the storage half the Trivy finding pointed at: every session certificate is a signature by that key, and its use was recorded nowhere. **Remaining:** M6-13 | AC-013, AC-015 | S |
+| M6-12 | Decide whether the audit-anchor store uses customer-managed keys (Trivy AZU-0060). The vault is already there, but CMK makes the anchors unreadable while the vault is unavailable and adds a key whose rotation then matters — so it belongs with the CA rollover work (M4-2), not before it. Geo-redundancy (AZU-0058) is a separate owner decision: GRS would replicate C1 audit data to the paired region | M4-2, D-08 | S |
 | M6-13 | Subscription-scoped Azure Activity Log export — **done 2026-09-02**: `modules/azure-activity-log` exports Administrative, Security and Policy to the diagnostics workspace, off by default because it is subscription-wide and many organisations already export centrally. Records the ARM operations that data-plane diagnostics never see: deleting the audit storage account, removing its immutability policy, purging the vault. **Remaining:** M6-14, and the blast-radius problem below | AC-013, AC-015 | S |
 | M6-14 | Alert on destructive ARM operations — **done 2026-09-02**: an action group plus three activity-log alerts covering any Administrative operation on the CA vault, on the audit-anchor store (including deletes refused by the immutability policy) and on role assignments in the control-plane resource group. The rules match by resource rather than by enumerated operation name, so an operation nobody thought of still raises. Created only when a receiver is configured; `alerting_enabled` is output so a plan cannot look covered when it is not | AC-015, ADR-0006 | S |
 | M6-15 | **Production gate.** Send the diagnostics and Activity Log to a workspace in a *different* subscription. Today the workspace lives in the subscription it watches, so an attacker with rights to remove the immutability policy can also delete the record of having done so. Needs a second subscription this project does not have | AC-013, AC-019 | M |
-| M6-12 | Decide whether the audit-anchor store uses customer-managed keys (Trivy AZU-0060). The vault is already there, but CMK makes the anchors unreadable while the vault is unavailable and adds a key whose rotation then matters — so it belongs with the CA rollover work (M4-2), not before it. Geo-redundancy (AZU-0058) is a separate owner decision: GRS would replicate C1 audit data to the paired region | M4-2, D-08 | S |
-| M6-10 | Replace `Mina:Hosting:RunBackgroundServices` with a lease the control-plane instances contend for, so the expiry sweep and audit export have exactly one owner without an operator having to move a setting during failover | ADR-0006 | M |
-| M6-9 | Operations rework: Proxmox host/cluster failure, on-premises SQL backup and restore, Arc agent failure (which breaks both SQL auth and Key Vault access with no stored credential to fall back on), and loss of the published DMZ endpoint as a **control-plane availability** signal for the stamps — nodes cannot pull allowlists or ship telemetry, and sessions stop renewing within one lease period. The Check Point tunnel drops out of Mina's dependency set entirely | OPERATIONS | M |
 
 ## M4 — Production hardening (Phase 4)
 
