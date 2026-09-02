@@ -37,9 +37,18 @@ public sealed partial class TrayIpcServer(
             // second agent is running or a local process has squatted the name to sit between the
             // analyst and the agent. Neither is survivable, so the agent stops instead of serving
             // a tray it cannot vouch for (THREAT_MODEL B1).
+            //
+            // Both exception types below are real, confirmed on real Windows, not defensive
+            // guessing: a plain pipe with no ACL refuses a second FirstPipeInstance with IOException
+            // ("All pipe instances are busy.", ERROR_PIPE_BUSY); this pipe has TrayPipeSecurity's
+            // DACL, and refuses it with UnauthorizedAccessException instead ("Access to the path is
+            // denied.", ERROR_ACCESS_DENIED) — a security-descriptor check runs ahead of the
+            // instance-count check and answers first. Catching only IOException let a genuinely
+            // squatted name escape as a raw, untranslated UnauthorizedAccessException instead of the
+            // InvalidOperationException this constructor promises and THREAT_MODEL B1 depends on.
             seed = CreateInstance(firstInstance: true);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Log.PipeNameTaken(logger, PipeName, ex.Message);
             throw new InvalidOperationException(
