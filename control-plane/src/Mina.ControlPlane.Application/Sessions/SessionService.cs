@@ -18,6 +18,12 @@ public sealed class SessionServiceOptions
     public TimeSpan LeaseTtl { get; set; } = TimeSpan.FromMinutes(60);
 
     /// <summary>
+    /// How many lapsed sessions one expiry sweep closes. The sweep repeats, so a backlog drains
+    /// over several passes rather than in one unbounded read.
+    /// </summary>
+    public int ExpirySweepBatchSize { get; set; } = 200;
+
+    /// <summary>
     /// Conditional Access authentication-context id (for example <c>c1</c>) that a token must carry
     /// in its <c>acrs</c> claim before a session is issued. Empty disables the check.
     /// </summary>
@@ -134,6 +140,43 @@ public sealed class SessionService(
 
         await _audit.SessionEndedAsync(session, cancellationToken).ConfigureAwait(false);
         await _repository.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ids of sessions whose lease has elapsed. Split from <see cref="ExpireAsync"/> so the caller
+    /// can close each one in its own unit of work, for the same reason the suppression sweep does:
+    /// a rejected commit leaves the failed change tracked, and every later commit in the same sweep
+    /// then re-attempts it.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> ListLapsedForExpiryAsync(CancellationToken cancellationToken)
+    {
+        var lapsed = await _repository
+            .ListLapsedAsync(_timeProvider.GetUtcNow(), _options.ExpirySweepBatchSize, cancellationToken)
+            .ConfigureAwait(false);
+
+        return [.. lapsed.Select(s => s.Id)];
+    }
+
+    /// <summary>
+    /// Closes one lapsed session. Returns false when it is no longer lapsed-and-active — the
+    /// analyst ended it, or another instance got there first — which is an ordinary race, not a
+    /// failure.
+    /// </summary>
+    public async Task<bool> ExpireAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _repository.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null || !session.TryExpire(_timeProvider.GetUtcNow()))
+        {
+            return false;
+        }
+
+        // Mutation before the audit write, then one commit: appending the event flushes the session
+        // change with it, so the terminal event and the state it describes land together or not at
+        // all. Writing the event first would commit it alone and leave the session for a second
+        // commit that can fail.
+        await _audit.SessionEndedAsync(session, cancellationToken).ConfigureAwait(false);
+        await _repository.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private async Task AuthoriseAsync(SessionPrincipal principal, string region, CancellationToken cancellationToken)

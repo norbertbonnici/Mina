@@ -33,10 +33,22 @@ public sealed class PersistentSessionAuditSink(AuditWriter writer) : ISessionAud
     public Task SessionEndedAsync(ResearchSession session, CancellationToken cancellationToken) =>
         _writer.WriteAsync(Draft(
             session,
-            session.State == SessionState.Revoked ? "session_revoked" : "session_ended",
+            EventTypeFor(session.State),
             session.State == SessionState.Revoked ? AuditSeverity.High : AuditSeverity.Info,
             new { state = session.State.ToString(), reason = session.EndReason?.ToString(), revoked_by = session.RevokedBy }),
             cancellationToken);
+
+    /// <summary>
+    /// A session's terminal event, named for how it ended. `session_expired` was catalogued in
+    /// EVENT_SCHEMAS but emitted by nothing, because nothing swept lapsed leases; it now has a
+    /// producer.
+    /// </summary>
+    private static string EventTypeFor(SessionState state) => state switch
+    {
+        SessionState.Revoked => "session_revoked",
+        SessionState.Expired => "session_expired",
+        _ => "session_ended",
+    };
 
     public Task AuthorizationDeniedAsync(
         SessionPrincipal principal, SessionDenialReason reason, string? region, CancellationToken cancellationToken) =>

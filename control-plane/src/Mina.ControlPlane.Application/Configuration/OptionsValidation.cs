@@ -137,6 +137,14 @@ public sealed class SessionServiceOptionsValidator : IValidateOptions<SessionSer
             failures.Add("Mina:Session:AnalystRole must name an app role; an empty role authorises no one.");
         }
 
+        if (options.ExpirySweepBatchSize < 1)
+        {
+            failures.Add(
+                $"Mina:Session:ExpirySweepBatchSize is {options.ExpirySweepBatchSize}; it must be at "
+                + "least 1. There is no 'unlimited' value: the repository refuses a smaller limit, so "
+                + "the sweep would throw on every pass and lapsed sessions would never be closed.");
+        }
+
         // Whitespace here is worse than either extreme. The gate is switched on by "is this
         // non-blank", but matched by an exact ordinal comparison — so " " disables the compliance
         // check silently, and " c1" arms a gate no token can ever satisfy while the challenge names

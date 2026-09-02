@@ -145,6 +145,7 @@ var runBackgroundServices = HostingGuard.BackgroundServicesEnabled(builder.Confi
 if (runBackgroundServices)
 {
     builder.Services.AddHostedService<SensitiveSessionExpiryService>();
+    builder.Services.AddHostedService<SessionExpiryService>();
 }
 
 // Egress-node interface: session allowlist and hostname telemetry ingest (M3-4).

@@ -2,9 +2,11 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Options;
+using Mina.ControlPlane.Application.Audit;
 using Mina.ControlPlane.Application.Sessions;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
 
 namespace Mina.ControlPlane.Application.Tests;
@@ -187,10 +189,71 @@ public class SessionServiceTests
         Assert.Equal(SessionDenialReason.SessionNotFound, ex.Reason);
     }
 
+    [Fact]
+    public async Task A_lapsed_session_is_closed_and_emits_its_terminal_event()
+    {
+        // ResearchSession.TryExpire had no production caller, so a session that simply ran out
+        // stayed State = Active for ever: no terminal event, an active-session set that only grew,
+        // and every query reasoning about "active" returning sessions that died hours ago.
+        var h = new Harness();
+        var grant = await h.Service.IssueAsync(h.Analyst(), h.Request("westeurope"), default);
+
+        h.Clock.Advance(TimeSpan.FromMinutes(61));
+
+        var lapsed = await h.Service.ListLapsedForExpiryAsync(default);
+        Assert.Equal([grant.SessionId], lapsed);
+        Assert.True(await h.Service.ExpireAsync(grant.SessionId, default));
+
+        var stored = await h.Repository.FindAsync(grant.SessionId, default);
+        Assert.Equal(SessionState.Expired, stored!.State);
+
+        Assert.Contains(grant.SessionId, h.Audit.Ended);
+
+        // Idempotent: a second sweep, or another instance racing this one, finds nothing to do.
+        Assert.False(await h.Service.ExpireAsync(grant.SessionId, default));
+        Assert.Empty(await h.Service.ListLapsedForExpiryAsync(default));
+    }
+
+    [Fact]
+    public async Task A_session_inside_its_lease_is_left_alone()
+    {
+        var h = new Harness();
+        var grant = await h.Service.IssueAsync(h.Analyst(), h.Request("westeurope"), default);
+
+        h.Clock.Advance(TimeSpan.FromMinutes(59));
+
+        Assert.Empty(await h.Service.ListLapsedForExpiryAsync(default));
+        Assert.False(await h.Service.ExpireAsync(grant.SessionId, default));
+        Assert.Equal(SessionState.Active, (await h.Repository.FindAsync(grant.SessionId, default))!.State);
+    }
+
+    [Fact]
+    public async Task Expiry_writes_session_expired_rather_than_session_ended()
+    {
+        // The event type is decided in the real sink, so a recording fake cannot prove this.
+        // `session_expired` was catalogued in EVENT_SCHEMAS and emitted by nothing, which meant a
+        // SOC rule keyed on it could never have fired.
+        var store = new InMemoryAuditEventStore();
+        var writer = new AuditWriter(
+            store, Options.Create(new AuditOptions { Environment = "test" }), new FakeClock(T0));
+        var h = new Harness(audit: new PersistentSessionAuditSink(writer));
+
+        var grant = await h.Service.IssueAsync(h.Analyst(), h.Request("westeurope"), default);
+        h.Clock.Advance(TimeSpan.FromMinutes(61));
+        Assert.True(await h.Service.ExpireAsync(grant.SessionId, default));
+
+        var events = await store.ReadAsync(0, 100, default);
+        Assert.Contains("session_expired", events.Select(e => e.EventType));
+        Assert.DoesNotContain("session_ended", events.Select(e => e.EventType));
+    }
+
     private sealed class Harness
     {
-        public Harness(string authContextId = "")
+        public Harness(string authContextId = "", ISessionAuditSink? audit = null)
         {
+            // Most tests assert against the recording fake; the one that checks which audit *event
+            // type* expiry writes needs the real sink, because the fake does not decide that.
+            var sink = audit ?? Audit;
             var regionPolicy = new RegionPolicy(
                 ["westeurope", "northeurope", "germanywestcentral", "francecentral"],
                 ["westeurope", "northeurope"]);
@@ -198,7 +261,7 @@ public class SessionServiceTests
             var issuer = new SessionCertificateIssuer(Ca, new SessionCertificatePolicy(TimeSpan.FromMinutes(60)));
             Clock = new FakeClock(T0);
             Service = new SessionService(
-                regionPolicy, issuer, Repository, new StubEgressDirectory(), Audit,
+                regionPolicy, issuer, Repository, new StubEgressDirectory(), sink,
                 Options.Create(new SessionServiceOptions { RequiredAuthContextId = authContextId }), Clock);
         }
 
@@ -245,6 +308,14 @@ public class SessionServiceTests
 
     private sealed class InMemorySessionRepository : ISessionRepository
     {
+        public Task<IReadOnlyList<ResearchSession>> ListLapsedAsync(
+            DateTimeOffset asOf, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ResearchSession>>(
+                [.. _store.Values
+                    .Where(s => s.State == SessionState.Active && s.LeaseExpiresAt <= asOf)
+                    .OrderBy(s => s.LeaseExpiresAt)
+                    .Take(limit)]);
+
         private readonly ConcurrentDictionary<Guid, ResearchSession> _store = new();
 
         public Task AddAsync(ResearchSession session, CancellationToken cancellationToken)

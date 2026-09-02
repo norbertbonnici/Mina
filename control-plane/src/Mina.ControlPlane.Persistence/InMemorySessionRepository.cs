@@ -29,6 +29,17 @@ public sealed class InMemorySessionRepository : ISessionRepository, ISessionQuer
         return Task.CompletedTask;
     }
 
+    public Task<IReadOnlyList<ResearchSession>> ListLapsedAsync(
+        DateTimeOffset asOf, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        return Task.FromResult<IReadOnlyList<ResearchSession>>(
+            [.. _sessions.Values
+                .Where(s => s.State == SessionState.Active && s.LeaseExpiresAt <= asOf)
+                .OrderBy(s => s.LeaseExpiresAt)
+                .Take(limit)]);
+    }
+
     public Task<IReadOnlyList<ResearchSession>> ListActiveAsync(
         DateTimeOffset asOf, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ResearchSession>>(

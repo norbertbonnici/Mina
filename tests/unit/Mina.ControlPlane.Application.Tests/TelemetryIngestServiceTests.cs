@@ -221,6 +221,14 @@ public class TelemetryIngestServiceTests
 
     private sealed class FakeSessions : ISessionRepository
     {
+        public Task<IReadOnlyList<ResearchSession>> ListLapsedAsync(
+            DateTimeOffset asOf, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ResearchSession>>(
+                [.. _store.Values
+                    .Where(s => s.State == SessionState.Active && s.LeaseExpiresAt <= asOf)
+                    .OrderBy(s => s.LeaseExpiresAt)
+                    .Take(limit)]);
+
         private readonly ConcurrentDictionary<Guid, ResearchSession> _store = new();
 
         public Task AddAsync(ResearchSession session, CancellationToken cancellationToken)

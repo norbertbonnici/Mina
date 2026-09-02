@@ -43,7 +43,7 @@ tunnel path is superseded); one event per record; at-least-once with `event_id` 
 | session_renewed | info | control-plane | cert_serial_old/new |
 | session_ended | info | control-plane | reason (user, browser_closed, tunnel_lost) |
 | session_revoked | high | control-plane | actor, reason |
-| session_expired | notice | *not emitted yet* | Nothing sweeps lapsed leases, so a session that simply runs out stays `Active` in the store with no terminal event — backlog M4-12 |
+| session_expired | info | control-plane | Written by the session expiry sweeper when a lease lapses without the analyst ending the session |
 | region_selected | info | control-plane | region; rejected attempts → authz_denied |
 | region_rejected | warning | control-plane | requested unapproved region |
 | sensitive_requested | notice | control-plane | justification_ref, requested_minutes |

@@ -43,6 +43,18 @@ public sealed class EfSessionRepository(MinaDbContext context) : ISessionReposit
         await _context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<ResearchSession>> ListLapsedAsync(
+        DateTimeOffset asOf, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+
+        return await _context.Sessions
+            .Where(s => s.State == SessionState.Active && s.LeaseExpiresAt <= asOf)
+            .OrderBy(s => s.LeaseExpiresAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<ResearchSession>> ListActiveAsync(
         DateTimeOffset asOf, CancellationToken cancellationToken) =>
         await _context.Sessions
