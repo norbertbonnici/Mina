@@ -17,7 +17,7 @@ decisions (D-01…D-12) are now decided** — see the decision log in `docs/PHAS
 (D-09 retention values await DPO ratification before production). **ADR-0006 (2026-09-01)**
 moved the control plane on premises and superseded ADR-0005, so the Check Point tunnel is no
 longer a dependency or an open precondition. Work proceeds per `docs/BACKLOG.md`; milestone M0 is
-complete and the on-premises move is tracked as M6.
+complete and the on-premises move is tracked as M4-14 to M4-28.
 
 ## See it working
 

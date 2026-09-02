@@ -44,7 +44,7 @@ DPO/legal ratification before production per REQUIREMENTS §5.
 2. Ingress CIDR allowlist for dev (D-07: corp egress CIDRs + named extras).
 3. SSH public key for node admin access in dev.
 4. Later (M2): test-tenant details (A7), corp public CIDRs for the egress deny-list, signing cert (A6).
-5. On premises (M6, ADR-0006): Proxmox API endpoint and token (environment variables only, never
+5. On premises (M4-14…M4-28, ADR-0006): Proxmox API endpoint and token (environment variables only, never
    tfvars or state), node and datastore names, DMZ bridge/VLAN id/addressing, corporate management
    CIDRs, the public DNS name and public-CA certificate for the published node-facing endpoint, and
    the control plane's public egress addresses for the Key Vault and storage firewalls

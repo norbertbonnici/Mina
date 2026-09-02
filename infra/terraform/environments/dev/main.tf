@@ -18,12 +18,12 @@ module "control_plane_azure" {
 
   # Dev deliberately differs from production on both of these, and the difference is the point:
   # a software-protected key and an unlocked immutability policy are fine for a PoC and provide
-  # none of the guarantees the design depends on. Production is premium + Locked (M6-6, M2-2c).
+  # none of the guarantees the design depends on. Production is premium + Locked (M4-19, M2-2c).
   key_vault_sku            = "standard"
   audit_immutability_state = "Unlocked"
   audit_retention_days     = 7
 
-  # Who hears about it when something happens to the CA vault or the audit anchors (M6-14). Empty
+  # Who hears about it when something happens to the CA vault or the audit anchors (M4-27). Empty
   # means no alert rules are created at all — see the variable for why that is the honest default.
   alert_email_receivers = var.alert_email_receivers
 }
@@ -55,7 +55,7 @@ module "egress_stamp" {
 }
 
 # ARM operations against the subscription — including anything that would remove the audit anchors
-# or the immutability policy protecting them (M6-13). Off unless enabled: it is subscription-wide,
+# or the immutability policy protecting them (M4-26). Off unless enabled: it is subscription-wide,
 # needs subscription-level rights, and many organisations already export the Activity Log centrally.
 module "activity_log" {
   source = "../../modules/azure-activity-log"

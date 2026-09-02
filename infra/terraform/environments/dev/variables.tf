@@ -63,7 +63,7 @@ variable "envoy_sha256" {
 
 variable "export_activity_log" {
   description = <<-EOT
-    Export the subscription's Activity Log to the diagnostics workspace (M6-13). Needs rights at the
+    Export the subscription's Activity Log to the diagnostics workspace (M4-26). Needs rights at the
     subscription, not just the resource group.
 
     Leave false if the organisation already exports the Activity Log centrally — a central export to

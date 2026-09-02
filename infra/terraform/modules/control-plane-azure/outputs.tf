@@ -24,6 +24,6 @@ output "diagnostics_workspace_id" {
 }
 
 output "alerting_enabled" {
-  description = "False when no receiver was configured, in which case nothing is alerting (M6-14)."
+  description = "False when no receiver was configured, in which case nothing is alerting (M4-27)."
   value       = length(var.alert_email_receivers) > 0 || var.alert_webhook_uri != null
 }

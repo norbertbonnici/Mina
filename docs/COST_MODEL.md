@@ -50,17 +50,17 @@ Removed from the Azure bill by ADR-0006: App Service plan P1v3 (€110–150), A
 
 ## 3. On-premises footprint (FIAU-side, not priced)
 
-| Item | Sizing (dev today; production to be sized in M6-9) | Cost owner |
+| Item | Sizing (dev today; production to be sized in M4-22) | Cost owner |
 |---|---|---|
 | Publishing reverse proxy VM | 1 small VM in the DMZ VLAN | FIAU infrastructure |
-| Application VM (API + portal) | 1 VM; a second for HA is a design item (ADR-0006, M6-10) | FIAU infrastructure |
+| Application VM (API + portal) | 1 VM; a second for HA is a design item (ADR-0006, M4-23) | FIAU infrastructure |
 | SQL Server VM (Azure Arc-enabled) | 1 VM; **SQL Server licensing** is the material line | FIAU licensing |
 | Azure Arc | Arc-enabled server registration is free; Arc-enabled SQL Server billing follows the licence model chosen (pay-as-you-go through Arc, or existing licences) | FIAU licensing |
 | Public-CA TLS certificate for the published endpoint | 1 certificate, renewed | FIAU (existing process) |
 | Backup, restore, cluster HA, patching, monitoring | Proxmox and SQL Server operations | FIAU operations |
 
 These replace platform-managed availability that App Service and Azure SQL used to provide, and are
-the reason M6-9 exists. They should be priced by the FIAU infrastructure team before the production
+the reason M4-22 exists. They should be priced by the FIAU infrastructure team before the production
 go decision so that D-11's envelope can be restated as a whole-platform figure.
 
 ## 4. Non-production (Azure)
@@ -79,7 +79,7 @@ envelope (≤ €150/mo).
 1. **Egress stamps scale linearly per region** — each approved region is ~€240/mo and is now the
    dominant Azure line; keep the approved list short until demand shows.
 2. **SQL Server licensing on premises** is the material new line and is FIAU-side; the licence
-   model chosen with Arc (M6-5) decides it.
+   model chosen with Arc (M4-18) decides it.
 3. **Log Analytics ingestion** is small after ADR-0006 but still the most volatile Azure line —
    keep retention tiers modest; security-relevant exports are small.
 4. Bandwidth is negligible at browsing volumes; re-check if usage patterns change (bulk

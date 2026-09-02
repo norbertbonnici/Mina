@@ -39,16 +39,14 @@ Deliverables:
 - Wazuh integration.
 - SigNoz integration.
 
-## Phase 3b - On-premises control plane (ADR-0006, added 2026-09-01; backlog M6)
-- Proxmox provisioning as code: DMZ VLAN, publishing proxy, application and SQL hosts.
-- Node-facing listener published from the FIAU DMZ; split listeners in the API.
-- Azure Arc onboarding for SQL Server Entra authentication and Key Vault/storage access.
-- Immutable-blob audit export sink; diagnostics on CA key use and anchor access.
-- On-premises break glass; operations rework for Proxmox, SQL Server and the published endpoint.
-- ADR-0005 (telemetry over the Check Point tunnel) retired: Wazuh/SigNoz delivery is a local hop.
-
 ## Phase 4 - Production hardening
-- HA/capacity design: second region if approved; Proxmox HA pair with a background-service lease (M6-10).
+- **On-premises control plane (ADR-0006, backlog M4-14 to M4-28).** Proxmox provisioning as code:
+  DMZ VLAN, publishing proxy, application and SQL hosts. Node-facing listener published from the
+  FIAU DMZ, with split listeners in the API. Azure Arc onboarding for SQL Server Entra
+  authentication and Key Vault/storage access. Immutable-blob audit export sink, and diagnostics
+  and alerting on CA key use and audit-anchor access. On-premises break glass. ADR-0005 (telemetry
+  over the Check Point tunnel) is retired: Wazuh/SigNoz delivery is a local hop.
+- HA/capacity design: second region if approved; Proxmox HA pair with a background-service lease (M4-23).
 - Key/secret rotation.
 - Backup/restore (including on-premises SQL Server) and rebuild procedures.
 - Patch/vulnerability management.

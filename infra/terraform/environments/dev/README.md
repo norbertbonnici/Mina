@@ -69,10 +69,10 @@ looking, including when it is you.
 ## Two things a green apply will not give you
 
 1. **The control plane.** It runs on Proxmox and is provisioned separately from `../dev-onprem`
-   (M6-2 first cut: hosts, firewalls and the publishing proxy — no SQL Server, Arc onboarding or
+   (M4-15 first cut: hosts, firewalls and the publishing proxy — no SQL Server, Arc onboarding or
    application deployment yet). Until it is up the nodes have nothing to fetch an allowlist from and
    no analyst can be issued a session.
-2. **A production-capable CA or audit sink.** `M2-2c` (Key Vault-backed CA) and `M6-6` (immutable
+2. **A production-capable CA or audit sink.** `M2-2c` (Key Vault-backed CA) and `M4-19` (immutable
    blob audit sink) are unbuilt, so the control plane still refuses to start outside Development
    unless `Mina:AllowDevelopmentFallbacks=true` — which means an ephemeral CA and a filesystem sink.
    The Key Vault and container created here are what those two items will consume.

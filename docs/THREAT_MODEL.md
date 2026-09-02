@@ -77,7 +77,7 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
   before authentication; the reverse proxy has no server block for the management port; per-host
   firewall admits the node port only from the proxy; public-CA TLS, rate limiting, optional source
   restriction to the stamps' static NAT prefixes; the DMZ is firewalled from the corporate LAN.
-  *Test:* listener-separation suite (M6-3) + external scan of the published endpoint.
+  *Test:* listener-separation suite (M4-16) + external scan of the published endpoint.
 - **D:** loss of the published endpoint stops allowlist pulls, telemetry and session renewal.
   Fails closed within one lease period — availability, not safety (OPERATIONS runbook).
 
@@ -106,14 +106,14 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
   activity-log export → high-severity Wazuh alerts, post-use review runbook, PIM approval for
   the RBAC group. *Test:* break-glass alerting drill (AC-015).
 - **Gap (ADR-0006):** the Azure RBAC group cannot reach a Proxmox-hosted API, portal or database,
-  so the on-premises plane has no break-glass mechanism yet — backlog M6-8.
+  so the on-premises plane has no break-glass mechanism yet — backlog M4-21.
 
 ### B9. On-premises control plane ↔ Azure retained services (Key Vault, immutable blob)
 - **S/E:** a compromised control-plane host uses its Arc managed identity to sign certificates or
   read anchors. *Mitigate:* identity scoped to sign/get on the CA key and write on the anchor
   container only; Key Vault and storage firewalls admit only the control plane's egress addresses;
-  CA key use and anchor access recorded in Log Analytics (M6-11); ARM-level tamper (immutability
-  policy removal, vault purge) needs the subscription activity-log export (M6-13). *Test:* RBAC
+  CA key use and anchor access recorded in Log Analytics (M4-24); ARM-level tamper (immutability
+  policy removal, vault purge) needs the subscription activity-log export (M4-26). *Test:* RBAC
   boundary tests; alert drill on anomalous signing volume.
 - **T (on-premises administrator):** a Proxmox or SQL administrator alters audit rows or VM disks.
   *Mitigate:* hash-chained audit trail anchored in write-once Azure storage the same administrator
@@ -137,8 +137,8 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 | Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017). Unchanged by ADR-0006, which deliberately declined the tunnel route: the on-premises control plane is reached at a published DMZ endpoint over the public internet, so this stays a blanket denial rather than becoming an allowlist |
 | Entra token stolen | Short session certs renewable only with fresh device-bound tokens. Revocation is refusal to renew, so the exposure window is the lease TTL (≈60 min) — **not** ≤30 s: the node performs no allowlist check before admitting a tunnel (D-14, M4-11) |
 | Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC. Blast radius is unchanged by ADR-0006: the node's reachable set is still the public internet plus one published control-plane endpoint, which is what it was when that endpoint was in Azure. What the endpoint exposes is bounded by the split listeners — the published listener carries only allowlist and telemetry ingest, never the portal or the audit read API |
-| Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence). Since ADR-0006 the store is on FIAU infrastructure and the anchors are in Azure immutable storage, so an on-premises administrator cannot make an alteration unanchored (D-18); anchor access is itself logged (M6-11) |
-| Published control-plane endpoint used to reach the portal, audit API or admin routes | Split listeners enforced by accepting port with default deny; the proxy has no management-port server block; host firewall; 404 before authentication (ADR-0006 constraint 1, M6-3) — see B4 |
+| Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence). Since ADR-0006 the store is on FIAU infrastructure and the anchors are in Azure immutable storage, so an on-premises administrator cannot make an alteration unanchored (D-18); anchor access is itself logged (M4-24) |
+| Published control-plane endpoint used to reach the portal, audit API or admin routes | Split listeners enforced by accepting port with default deny; the proxy has no management-port server block; host firewall; 404 before authentication (ADR-0006 constraint 1, M4-16) — see B4 |
 | Break-glass abused | §4/B8 |
 | Dependency compromised | SBOM + lockfiles (NuGet, container images, Envoy builds), pinned versions, scanning in CI, signed artefacts (SR-012) |
 
@@ -169,7 +169,7 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 4. AAAA-only destinations unreachable (IPv4-only egress at MVP).
 5. Control-plane outage pauses new sessions and stops renewals within one lease period
    (availability, not safety). Since ADR-0006 that availability is the FIAU's to provide: one of
-   each host today (M6-2), HA and backup/restore in M6-9.
+   each host today (M4-15), HA and backup/restore in M4-22.
 
 ## 8. Security testing required
 

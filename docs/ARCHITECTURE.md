@@ -1,7 +1,7 @@
 # Architecture
 
 Status: **Approved direction (D-01…D-04, 2026-08-31), amended by ADR-0006 (D-16…D-18,
-2026-09-01)** — implementation may proceed through M0–M3 and M6; the steering design remains
+2026-09-01)** — implementation may proceed through M0–M3 and the on-premises rows of M4; the steering design remains
 conditional on the M1-5 verification register (§13), and the open decisions in
 `docs/PHASE0_DECISIONS.md` gate their referenced milestones.
 Date: 2026-08-31, revised 2026-09-02 for ADR-0006
@@ -352,7 +352,7 @@ token taken from the environment so it never enters a variable, a tfvars file or
 | Resource group `rg-mina-<env>-cp` | |
 | Key Vault (RBAC, purge protection) | Internal CA key (non-exportable). Premium/HSM in production; reached outbound from the Arc-enabled hosts |
 | Storage account (immutable/WORM container) | Periodic signed audit export for tamper evidence. Locked immutability in production — Unlocked anchors nothing |
-| Log Analytics workspace | CA key use (Key Vault AuditEvent) and audit-anchor access (StorageRead/Write/Delete); optional subscription Activity Log export for the ARM operations that would remove tamper evidence. **It currently sits in the subscription it watches**, so it shares a blast radius with the resources it protects — moving it to a separate subscription is a production gate (M6-15) |
+| Log Analytics workspace | CA key use (Key Vault AuditEvent) and audit-anchor access (StorageRead/Write/Delete); optional subscription Activity Log export for the ARM operations that would remove tamper evidence. **It currently sits in the subscription it watches**, so it shares a blast radius with the resources it protects — moving it to a separate subscription is a production gate (M4-28) |
 
 **Egress stamp (per approved region, per env):**
 
@@ -385,9 +385,9 @@ stamp (2+ instances, zones optional) still applies in production.
 
 Control-plane availability is the FIAU's to provide since ADR-0006: Proxmox cluster HA, SQL Server
 backup/restore and the published endpoint's uptime replace what App Service and Azure SQL managed.
-The on-premises environment is one of each host today (M6-2); running two instances is a design
+The on-premises environment is one of each host today (M4-15); running two instances is a design
 question in its own right (ADR-0006, "More than one instance") and the background-service lease is
-backlog M6-10. An outage stops session issuance and renewal within one lease period — the platform
+backlog M4-23. An outage stops session issuance and renewal within one lease period — the platform
 failing closed — and `docs/OPERATIONS.md` lists the runbooks.
 
 ## 10. Audit and telemetry
@@ -451,7 +451,7 @@ existing enterprise mechanisms — **no application backdoor exists**:
 - **Gap since ADR-0006:** Azure RBAC cannot touch a Proxmox-hosted API, portal or database, so
   regaining administrative control of the on-premises plane when Entra sign-in fails has no
   mechanism yet. It needs the same shape — enterprise-standard emergency access to Proxmox and the
-  SQL host under management custody, every use alerted at high severity — and is backlog M6-8. D-10
+  SQL host under management custody, every use alerted at high severity — and is backlog M4-21. D-10
   is to be extended for it, not reinterpreted.
 - Analyst-facing componentry contains no break-glass code paths, credentials, or configuration.
 - Every use triggers the post-use review runbook (`docs/OPERATIONS.md`).

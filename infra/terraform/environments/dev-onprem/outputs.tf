@@ -1,5 +1,5 @@
 output "node_endpoint" {
-  description = "Set as the egress sidecar's ControlPlaneBaseUrl (backlog M6-4)."
+  description = "Set as the egress sidecar's ControlPlaneBaseUrl (backlog M4-17)."
   value       = module.control_plane.node_endpoint
 }
 

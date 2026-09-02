@@ -43,7 +43,7 @@ write_files:
 runcmd:
   - [ systemctl, enable, --now, nftables ]
 
-# SQL Server installation and Azure Arc onboarding are M6-5. Arc is what makes
+# SQL Server installation and Azure Arc onboarding are M4-18. Arc is what makes
 # "Authentication=Active Directory Default" work from here, and that is the single mechanism
 # keeping SR-005 ("no stored credentials") true for the database -- so it needs verifying against a
 # real Arc-onboarded host, not assuming.

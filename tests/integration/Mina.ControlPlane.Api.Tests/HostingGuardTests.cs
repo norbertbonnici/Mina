@@ -45,7 +45,7 @@ public sealed class HostingGuardTests
     public void Accepting_the_development_stand_ins_does_not_also_disable_listener_separation()
     {
         // These have to be independent switches. While the Key Vault CA (M2-2c) and the
-        // immutable-blob sink (M6-6) are unbuilt, every non-Development host must set
+        // immutable-blob sink (M4-19) are unbuilt, every non-Development host must set
         // AllowDevelopmentFallbacks simply to boot — so if the listener guard hung off that flag,
         // the one configuration the separation exists to protect would be the one that turned it
         // off, and a single listener would be published to the internet serving the approvals and

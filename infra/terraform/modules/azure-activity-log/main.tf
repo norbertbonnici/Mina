@@ -1,6 +1,6 @@
-# Subscription-scoped Azure Activity Log export (M6-13).
+# Subscription-scoped Azure Activity Log export (M4-26).
 #
-# M6-11 records who *used* the CA signing key and the audit anchors. This records what was done
+# M4-24 records who *used* the CA signing key and the audit anchors. This records what was done
 # *to* them. The distinction is the whole point: deleting the storage account, removing the
 # immutability policy, purging the vault or granting oneself a role are ARM operations. They never
 # appear in data-plane diagnostics, and they are what removing tamper evidence actually looks like.
@@ -13,7 +13,7 @@
 #      different subscription (or tenant), which needs a second subscription this project does not
 #      have — recorded as a production-gate item, not silently accepted.
 #   2. Export is not detection. Records in a workspace nobody queries prove things after the fact
-#      but stop nothing at the time; alerting on the destructive operations is M6-14.
+#      but stop nothing at the time; alerting on the destructive operations is M4-27.
 #
 # This is subscription-wide, not Mina-scoped: the Activity Log is a property of the subscription, so
 # enabling it captures every workload in it. That is usually what an organisation wants, but it is

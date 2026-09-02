@@ -45,7 +45,7 @@ terraform apply onprem.tfplan
 
 Provisioning creates the hosts, the accounts, the firewalls and the key-ring directory. It does not:
 
-- **Install SQL Server or onboard Arc** (M6-5). Arc is what makes
+- **Install SQL Server or onboard Arc** (M4-18). Arc is what makes
   `Authentication=Active Directory Default` work from a Proxmox host, and that single mechanism is
   what keeps SR-005 ("no stored credentials") true for the database. It needs verifying against a
   real Arc-onboarded host rather than assuming.
@@ -55,5 +55,5 @@ Provisioning creates the hosts, the accounts, the firewalls and the key-ring dir
   would restart-loop without a certificate, which is harder to diagnose than a service that is
   plainly not running yet. Install into `/etc/mina/tls`, then `nginx -t && systemctl enable --now
   nginx`.
-- **Give you HA.** One of each host. Backup, restore and cluster HA are M6-9 and are the FIAU
+- **Give you HA.** One of each host. Backup, restore and cluster HA are M4-22 and are the FIAU
   infrastructure team's to design.

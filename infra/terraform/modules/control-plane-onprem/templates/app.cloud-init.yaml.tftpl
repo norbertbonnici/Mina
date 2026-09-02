@@ -78,5 +78,5 @@ runcmd:
   - [ systemctl, enable, --now, nftables ]
 
 # The application itself is deployed here separately -- provisioning creates the host, the account,
-# the firewall and the key-ring directory, not the build. Arc onboarding (M6-5) also lands here, and
+# the firewall and the key-ring directory, not the build. Arc onboarding (M4-18) also lands here, and
 # is what lets the app reach SQL, Key Vault and the audit container with no stored credential.

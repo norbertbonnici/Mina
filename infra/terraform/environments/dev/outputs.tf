@@ -24,7 +24,7 @@ output "audit_anchors_are_immutable" {
 }
 
 output "activity_log_exported" {
-  description = "Whether ARM operations against this subscription are being recorded (M6-13)."
+  description = "Whether ARM operations against this subscription are being recorded (M4-26)."
   value       = module.activity_log.enabled
 }
 

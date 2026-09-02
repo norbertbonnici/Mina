@@ -139,7 +139,7 @@ Proxmox HA pair runs everything twice, and three things behave differently:
   work, but with per-instance filesystem sinks it would leave one node's chain permanently unanchored
   while the host reports healthy — and `/api/audit/verify` would report the other instance's anchors
   as missing, which reads exactly like tamper evidence. `Mina:Hosting:RunBackgroundServices`
-  designates one instance; the correct answer is a contended lease, backlog M6-10.
+  designates one instance; the correct answer is a contended lease, backlog M4-23.
 - **The suppression expiry sweep is safe duplicated**, because each approval expires in its own unit
   of work and the loser of a race gets a concurrency conflict the sweeper already handles.
 

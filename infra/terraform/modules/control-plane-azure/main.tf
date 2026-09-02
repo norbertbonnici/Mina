@@ -17,7 +17,7 @@
 #                              approved specific regions) and not one this module should take.
 #   AZU-0060 (customer-managed A defensible hardening step, since the vault is right here — but it
 #             keys)            makes the audit store unreadable whenever the vault is unavailable,
-#                              and adds a key whose own rotation then matters. Raised as M6-12 to be
+#                              and adds a key whose own rotation then matters. Raised as M4-25 to be
 #                              decided alongside M4-2 rather than adopted by default.
 #
 # Everything else — API, portal, SQL, service logs — runs on the FIAU Proxmox cluster. These two
@@ -141,7 +141,7 @@ resource "azurerm_storage_container" "audit_exports" {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Diagnostics (M6-11)
+# Diagnostics (M4-24)
 # ---------------------------------------------------------------------------------------------
 #
 # Two resources hold the only things the platform keeps in Azure, and until now neither recorded
@@ -211,10 +211,10 @@ resource "azurerm_monitor_diagnostic_setting" "audit_blobs" {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Alerting on destructive operations (M6-14)
+# Alerting on destructive operations (M4-27)
 # ---------------------------------------------------------------------------------------------
 #
-# Export is not detection. M6-13 puts ARM operations in a workspace; these raise a human when the
+# Export is not detection. M4-26 puts ARM operations in a workspace; these raise a human when the
 # operations are against the two resources that hold the platform's roots of trust.
 #
 # The criteria deliberately do NOT enumerate operation names. Naming

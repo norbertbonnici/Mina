@@ -34,7 +34,7 @@ public static class HostingGuard
     /// <summary>
     /// Opt-in switch for running both surfaces on one listener. Separate from
     /// <see cref="AllowDevelopmentFallbacksKey"/> on purpose: while the Key Vault CA (M2-2c) and the
-    /// immutable-blob audit sink (M6-6) are unbuilt, every non-Development host has to set that flag
+    /// immutable-blob audit sink (M4-19) are unbuilt, every non-Development host has to set that flag
     /// simply to boot — so hanging listener separation off it meant the one configuration the
     /// separation exists to protect was also the one that switched it off.
     /// </summary>
@@ -59,7 +59,7 @@ public static class HostingGuard
     ///
     /// This switch is the blunt answer — designate one instance — and it is deliberately blunt. The
     /// correct answer is a lease the instances contend for, so that failover does not depend on an
-    /// operator remembering to move a setting; that is backlog M6-10. Until then, leaving this true
+    /// operator remembering to move a setting; that is backlog M4-23. Until then, leaving this true
     /// everywhere is safe only because the shared sink makes the race benign, and that is exactly
     /// the assumption an operator should have to make explicitly.
     /// </remarks>

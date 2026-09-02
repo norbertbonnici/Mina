@@ -79,5 +79,5 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 - At least two production egress regions are desirable for hardened production, subject to Phase 0 design/cost review.
 - Health monitoring, capacity monitoring and alerting must be defined before production.
 - Control-plane availability — Proxmox HA, SQL Server backup/restore, uptime of the published
-  node-facing endpoint — is FIAU-provided since ADR-0006 and must be defined before production (M6-9).
+  node-facing endpoint — is FIAU-provided since ADR-0006 and must be defined before production (M4-22).
 - Production deployment requires explicit human approval.
