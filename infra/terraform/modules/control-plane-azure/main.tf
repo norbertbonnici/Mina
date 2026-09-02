@@ -1,5 +1,26 @@
 # The only Azure resources the control plane still uses after ADR-0006.
 #
+# Four Trivy findings stand against this file, all below the HIGH/CRITICAL gate CI enforces. They
+# are recorded here rather than suppressed, because "below the gate" is not the same as "considered
+# and accepted", and this is the store that holds a regulator's audit anchors:
+#
+#   AZU-0014 (key expiration)  Not set, deliberately. The CA signing key has no rollover procedure
+#                              yet (M4-2), so an expiry date would be a scheduled outage of session
+#                              issuance rather than a control. It belongs with the rollover, not
+#                              before it.
+#   AZU-0057 (storage logging) A real gap, raised as M6-11. Reads of and write attempts against the
+#                              audit anchors should themselves be logged. The check looks for the
+#                              classic queue-service logging block, which does not fit a blob-only
+#                              account, but its intent is right and currently unmet — and where the
+#                              logs should go is a live question now that Wazuh is on premises.
+#   AZU-0058 (geo-redundancy)  ZRS today. Moving to GRS replicates C1 audit data to the paired
+#                              region, which is a data-residency decision for the owner (D-08
+#                              approved specific regions) and not one this module should take.
+#   AZU-0060 (customer-managed A defensible hardening step, since the vault is right here — but it
+#             keys)            makes the audit store unreadable whenever the vault is unavailable,
+#                              and adds a key whose own rotation then matters. Raised as M6-12 to be
+#                              decided alongside M4-2 rather than adopted by default.
+#
 # Everything else — API, portal, SQL, service logs — runs on the FIAU Proxmox cluster. These two
 # stay in Azure because they are the guarantees a general-purpose VM cannot provide (D-18): a
 # signing key that never leaves a managed vault, and storage that can refuse to overwrite an audit
@@ -72,6 +93,14 @@ resource "azurerm_storage_account" "audit" {
   account_replication_type = "ZRS"
   account_kind             = "StorageV2"
   min_tls_version          = "TLS1_2"
+
+  # A second, independent encryption pass at the infrastructure layer. Cheap, and it can only be set
+  # when the account is created — enabling it later means recreating the account, which for a store
+  # holding immutable audit anchors is exactly the operation you do not want to discover you need.
+  infrastructure_encryption_enabled = true
+
+  # Audit anchors have no reason to leave the tenant that owns them.
+  cross_tenant_replication_enabled = false
 
   # Entra authentication only. A shared key would be a stored credential, which is the property
   # ARCHITECTURE §4 claims the platform does not have anywhere.
