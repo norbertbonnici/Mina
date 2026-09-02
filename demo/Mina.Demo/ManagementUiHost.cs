@@ -5,9 +5,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Mina.ControlPlane.Application.SensitiveSessions;
+using Mina.ControlPlane.Application.Sessions;
+using Mina.ControlPlane.Domain;
 using Mina.ControlPlane.Domain.Regions;
 using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Persistence;
 using Mina.ManagementUi.Infrastructure;
 using Mina.TestSupport;
 
@@ -60,6 +63,13 @@ internal static class ManagementUiHost
         builder.Services.AddSingleton(sessionQueries);
         builder.Services.AddSingleton(requests);
         builder.Services.AddSingleton<ISensitiveSessionAuditSink, NullSensitiveSessionAuditSink>();
+        // Same substitution as the sensitive-session sink above: the demo's audit trail of record
+        // is the control-plane API's own sinks (visible as the info: audit ... lines on the
+        // console), not this UI's own service instance. Without these two, SensitiveSessionService
+        // fails to activate at all — its constructor has required them since the D-06a
+        // expiry-terminates-the-session change, and this host was never updated for it.
+        builder.Services.AddSingleton<ISessionAuditSink, NullSessionAuditSink>();
+        builder.Services.AddSingleton<IUnitOfWork, InMemoryUnitOfWork>();
         builder.Services.Configure<SensitiveSessionOptions>(_ => { });
         builder.Services.AddScoped<SensitiveSessionService>();
 
