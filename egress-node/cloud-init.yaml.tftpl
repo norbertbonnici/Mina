@@ -13,6 +13,9 @@
 # M1 lab the certs are provisioned out of band into /etc/mina/tls. The CA private key never reaches
 # the node: it holds its own server certificate and the CA's public certificate only.
 
+packages:
+  - nftables
+
 groups:
   - mina-tls
   - mina-log
@@ -36,6 +39,49 @@ write_files:
     owner: "root:mina-tls"
     content: |
       ${indent(6, envoy_config)}
+
+  # M4-10. Envoy's RBAC filter refuses a CONNECT whose *authority* is a private or link-local
+  # address, but an authority is a name and names resolve. A public hostname pointed at
+  # 169.254.169.254 or 10.x passes that check and is then dialled by the dynamic forward proxy, so
+  # the deny-list cannot be the whole control — the config says so itself.
+  #
+  # This closes it at the socket, after resolution, where the real destination is known. It is
+  # scoped by uid rather than applied host-wide, which is the reason mina-envoy is a fixed account
+  # instead of systemd's DynamicUser: the node itself still needs the addresses Envoy must not
+  # reach. mina-fetch-certs talks to IMDS at 169.254.169.254 for its managed-identity token, and a
+  # blanket rule would break certificate provisioning to close a proxy hole.
+  #
+  # reject rather than drop: Envoy gets an immediate failure and the analyst gets a prompt error,
+  # instead of a hang that looks like a slow site.
+  - path: /etc/nftables.conf
+    permissions: "0644"
+    owner: "root:root"
+    content: |
+      #!/usr/sbin/nft -f
+      flush ruleset
+      table inet mina {
+        chain output {
+          type filter hook output priority 0; policy accept;
+
+          # Research egress is for the public internet. Nothing Envoy legitimately reaches lives in
+          # private, loopback, link-local or carrier-grade-NAT space.
+          meta skuid "mina-envoy" ip daddr {
+            10.0.0.0/8,
+            172.16.0.0/12,
+            192.168.0.0/16,
+            169.254.0.0/16,
+            127.0.0.0/8,
+            100.64.0.0/10,
+            0.0.0.0/8
+          } reject with icmp type admin-prohibited
+
+          meta skuid "mina-envoy" ip6 daddr {
+            ::1/128,
+            fc00::/7,
+            fe80::/10
+          } reject with icmpv6 type admin-prohibited
+        }
+      }
 
   - path: /usr/local/sbin/mina-install-envoy.sh
     permissions: "0700"
@@ -135,6 +181,8 @@ write_files:
       WantedBy=multi-user.target
 
 runcmd:
+  # Before Envoy starts, so there is no window in which it is serving without the rule.
+  - [ systemctl, enable, --now, nftables ]
   # setgid so every access-log file inherits mina-log, which is what makes the sidecar's read
   # possible without widening the mode.
   - [ install, -d, -m, "2750", -o, mina-envoy, -g, mina-log, /var/log/mina ]

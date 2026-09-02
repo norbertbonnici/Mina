@@ -95,10 +95,13 @@ static_resources:
           # Denials are logged like any other request, so an attempt to reach IMDS is visible in
           # hostname telemetry rather than silent.
           #
-          # This matches the CONNECT authority, so it stops literal addresses. It does NOT stop a
-          # public DNS name that resolves into private space (DNS rebinding); the durable control
-          # for that is a host firewall on the node, tracked in the backlog — see
-          # docs/SECURITY_REVIEW_2026-09-01.md.
+          # This matches the CONNECT authority, so it stops literal addresses, and it is the layer
+          # that makes an attempt *visible* — a refusal is logged like any other request. It cannot
+          # stop a public DNS name that resolves into private space, because by the time the name is
+          # resolved this filter has already passed the request. The post-resolution control is the
+          # uid-scoped nftables rule in cloud-init (M4-10): it refuses traffic from Envoy's account
+          # to private, loopback and link-local space at the socket, where the real destination is
+          # known. Neither layer is redundant — this one reports, that one enforces.
           - name: envoy.filters.http.rbac
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
