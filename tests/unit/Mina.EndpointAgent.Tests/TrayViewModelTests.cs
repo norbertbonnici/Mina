@@ -33,7 +33,37 @@ public sealed class TrayViewModelTests : IAsyncLifetime, IAsyncDisposable
         };
 
         await _server.StartAsync(CancellationToken.None);
+
+        // Absorb a slow first accept (this server was just started, and CI's Windows runner can be
+        // slow to schedule it) here, at a raw pipe level that never touches _control — a warm-up
+        // through the real client would count as a request and break the exact-call-count and
+        // exact-sequence assertions later in this file (Assert.Single(_control.Seen) and similar).
+        // The real client below keeps the untouched production connect timeout throughout, which
+        // An_agent_that_stops_answering_is_reported_as_unavailable depends on for its own timing.
+        await WaitForPipeReadyAsync(_pipeName);
         _viewModel = new TrayViewModel(new TrayIpcClient(_pipeName), _clock);
+    }
+
+    private static async Task WaitForPipeReadyAsync(string pipeName)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            await using var probe = new System.IO.Pipes.NamedPipeClientStream(
+                ".", pipeName, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+            try
+            {
+                await probe.ConnectAsync(500, deadline.Token);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException)
+            {
+                if (deadline.IsCancellationRequested)
+                {
+                    throw;
+                }
+            }
+        }
     }
 
     // Explicit on both interfaces: xunit's IAsyncLifetime.DisposeAsync returns Task and cannot also

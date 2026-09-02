@@ -29,9 +29,18 @@ public sealed class AgentUnavailableException : Exception
 /// Nothing here is trusted by the agent. Every operation is re-validated on the far side, so a
 /// tampered tray can only ask for things the agent would have allowed anyway.
 /// </remarks>
-public sealed class TrayIpcClient(string pipeName = TrayProtocol.PipeName, string serverName = ".") : IAsyncDisposable
+public sealed class TrayIpcClient(
+    string pipeName = TrayProtocol.PipeName, string serverName = ".", TimeSpan? connectTimeout = null)
+    : IAsyncDisposable
 {
     private readonly SemaphoreSlim _mutex = new(1, 1);
+
+    // Production callers get TrayProtocol.ConnectTimeout unchanged — this parameter exists so a
+    // test can give a freshly started, not-yet-warm server (a cold pipe on a loaded CI runner) more
+    // room to accept the first connection than the real UX budget allows, without weakening the
+    // real one: an actual tray polling an actual agent should fail fast at the production value,
+    // not wait out whatever margin a test needed.
+    private readonly TimeSpan _connectTimeout = connectTimeout ?? TrayProtocol.ConnectTimeout;
     private NamedPipeClientStream? _pipe;
     private bool _disposed;
 
@@ -119,7 +128,7 @@ public sealed class TrayIpcClient(string pipeName = TrayProtocol.PipeName, strin
         try
         {
             await pipe.ConnectAsync(
-                    (int)TrayProtocol.ConnectTimeout.TotalMilliseconds, cancellationToken)
+                    (int)_connectTimeout.TotalMilliseconds, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException)

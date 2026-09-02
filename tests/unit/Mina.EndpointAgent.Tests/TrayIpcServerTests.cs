@@ -23,6 +23,16 @@ public sealed class TrayIpcServerTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(20);
 
+    // Deliberately shorter than TrayProtocol.ExchangeTimeout (15s): ExchangeAsync wraps every call
+    // in its own CancelAfter(ExchangeTimeout), so a connect timeout at or above that value can
+    // never fire on its own terms — the exchange-level deadline wins the race first and the
+    // caller sees a raw OperationCanceledException instead of the intended AgentUnavailable
+    // translation. This is generous for CI (a freshly started server's first accept can be slow to
+    // schedule on a loaded Windows runner) without crossing that ceiling. Not used by the one test
+    // that specifically asserts the *production* (2s) connect timeout's fast-detection behaviour —
+    // that test keeps the default.
+    private static readonly TimeSpan ConnectPatience = TimeSpan.FromSeconds(10);
+
     private static (TrayIpcServer Server, RecordingTrayControl Control, string PipeName) Build(
         Action<RecordingTrayControl>? configure = null)
     {
@@ -49,7 +59,7 @@ public sealed class TrayIpcServerTests
         await server.StartAsync(cts.Token);
         try
         {
-            await using var client = new TrayIpcClient(pipeName);
+            await using var client = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
 
             var response = await client.GetStatusAsync(cts.Token);
 
@@ -73,7 +83,7 @@ public sealed class TrayIpcServerTests
         await server.StartAsync(cts.Token);
         try
         {
-            await using var client = new TrayIpcClient(pipeName);
+            await using var client = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
 
             for (var i = 0; i < 5; i++)
             {
@@ -96,7 +106,7 @@ public sealed class TrayIpcServerTests
         await server.StartAsync(cts.Token);
         try
         {
-            await using var client = new TrayIpcClient(pipeName);
+            await using var client = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
 
             await client.SelectRegionAsync("northeurope", cts.Token);
             await client.RequestSensitiveAsync("CASE-2026-0417", 90, cts.Token);
@@ -169,7 +179,7 @@ public sealed class TrayIpcServerTests
             }
 
             // The instance that served the bad peer is recycled, so the next client is served.
-            await using var client = new TrayIpcClient(pipeName);
+            await using var client = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
             Assert.True((await client.GetStatusAsync(cts.Token)).Ok);
         }
         finally
@@ -210,7 +220,7 @@ public sealed class TrayIpcServerTests
                 // the agent open by withholding a newline.
             }
 
-            await using var next = new TrayIpcClient(pipeName);
+            await using var next = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
             Assert.True((await next.GetStatusAsync(cts.Token)).Ok);
         }
         finally
@@ -231,7 +241,7 @@ public sealed class TrayIpcServerTests
         await server.StartAsync(cts.Token);
         try
         {
-            await using var client = new TrayIpcClient(pipeName);
+            await using var client = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
 
             var response = await client.GetStatusAsync(cts.Token);
 
@@ -253,9 +263,9 @@ public sealed class TrayIpcServerTests
         await server.StartAsync(cts.Token);
         try
         {
-            await using var first = new TrayIpcClient(pipeName);
-            await using var second = new TrayIpcClient(pipeName);
-            await using var third = new TrayIpcClient(pipeName);
+            await using var first = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
+            await using var second = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
+            await using var third = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
 
             var responses = await Task.WhenAll(
                 first.GetStatusAsync(cts.Token),
@@ -280,7 +290,7 @@ public sealed class TrayIpcServerTests
         using var cts = new CancellationTokenSource(Patience);
         await first.StartAsync(cts.Token);
 
-        await using var client = new TrayIpcClient(pipeName);
+        await using var client = new TrayIpcClient(pipeName, connectTimeout: ConnectPatience);
         Assert.True((await client.GetStatusAsync(cts.Token)).Ok);
 
         await first.StopAsync(CancellationToken.None);
@@ -322,6 +332,9 @@ public sealed class TrayIpcServerTests
         await server.StartAsync(cts.Token);
         try
         {
+            // The default (production) connect timeout, deliberately: this is what is under test —
+            // that a disabled pipe is detected and reported quickly, not made to wait out a longer
+            // CI-friendly allowance the way the other tests in this file do.
             await using var client = new TrayIpcClient(pipeName);
 
             await Assert.ThrowsAsync<AgentUnavailableException>(() => client.GetStatusAsync(cts.Token));
