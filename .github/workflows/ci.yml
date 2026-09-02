@@ -78,7 +78,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Trivy config scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0.28.0
+        # v0.28.0 (the version this pinned before) is permanently broken: it references
+        # aquasecurity/setup-trivy@v0.2.1 internally, and that tag has since been deleted upstream —
+        # nothing in this repo can fix that, only moving off it. Pinned by commit rather than tag,
+        # matching what trivy-action's own maintainers switched to after hitting the same problem
+        # with their nested dependency (v0.32.0 release notes).
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: infra/terraform

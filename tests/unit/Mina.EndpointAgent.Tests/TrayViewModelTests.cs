@@ -11,6 +11,7 @@ namespace Mina.EndpointAgent.Tests;
 /// The tray end to end over a real pipe: client, server and the model the WPF shell binds to. What
 /// these pin down is that the panel never states a protection the agent did not report.
 /// </summary>
+[Collection(TrayIpcCollectionMarker.Name)]
 public sealed class TrayViewModelTests : IAsyncLifetime, IAsyncDisposable
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 1, 14, 0, 0, TimeSpan.Zero);
@@ -46,7 +47,7 @@ public sealed class TrayViewModelTests : IAsyncLifetime, IAsyncDisposable
 
     private static async Task WaitForPipeReadyAsync(string pipeName)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         while (true)
         {
             await using var probe = new System.IO.Pipes.NamedPipeClientStream(

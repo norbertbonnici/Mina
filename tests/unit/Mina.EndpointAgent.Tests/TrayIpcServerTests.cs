@@ -19,6 +19,7 @@ namespace Mina.EndpointAgent.Tests;
 /// with a Unix-domain socket. What is portable, and what is asserted here, is the framing, the
 /// bounds and the failure handling.
 /// </remarks>
+[Collection(TrayIpcCollectionMarker.Name)]
 public sealed class TrayIpcServerTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(20);
@@ -384,4 +385,19 @@ public sealed class TrayIpcServerTests
     private static async Task<TrayResponse> ReadResponseAsync(Stream stream, CancellationToken ct) =>
         await TrayFraming.ReadAsync(stream, TrayJsonContext.Default.TrayResponse, ct)
         ?? throw new InvalidOperationException("the agent closed without answering");
+}
+
+/// <summary>
+/// Groups every test that opens a real named pipe into one xUnit collection so they run
+/// sequentially against each other. xUnit parallelises across collections by default, and a
+/// dozen-plus concurrent pipe servers each waiting on OS-scheduled I/O completion is exactly the
+/// kind of load that turns a generous timeout into a flaky one on a 2-core CI runner — confirmed by
+/// a real run where even a 20s allowance wasn't enough while these ran alongside each other. Tests
+/// that do not touch a pipe (TrayControlServiceTests, TrayPanelTests) are unaffected and keep
+/// running in parallel with everything else.
+/// </summary>
+[CollectionDefinition(TrayIpcCollectionMarker.Name, DisableParallelization = true)]
+public sealed class TrayIpcCollectionMarker
+{
+    public const string Name = "Tray named pipe (sequential)";
 }
