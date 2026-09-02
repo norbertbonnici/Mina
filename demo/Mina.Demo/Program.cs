@@ -115,6 +115,10 @@ await using (egress)
         try
         {
             var session = await sessions.EstablishAsync(CancellationToken.None);
+            // Since M4-11 a certificate is not enough at the real Envoy — the sidecar's session
+            // view has to list it too. The demo has no independent allowlist-pull loop, so it
+            // tells the egress directly, standing in for what a poll would have picked up.
+            egress.SetLiveSession(session.SessionId);
             Step("Session", $"{session.SessionId} · region {session.Region} · mode {session.Mode} · " +
                             $"lease to {session.LeaseExpiresAt.ToLocalTime():HH:mm:ss} · " +
                             $"cert {session.CertificateSerialNumber[..8]}…");
@@ -221,6 +225,7 @@ await using (egress)
             {
                 case 'k':
                     await sessions.EndAsync(CancellationToken.None);
+                    egress.SetLiveSession(null);
                     await CloseProxyAsync();
                     Warn("Session ended and the proxy torn down. The browser now has NO route out — " +
                          "reload a page and it will fail. Nothing falls back to ordinary egress.");
@@ -240,6 +245,7 @@ await using (egress)
                     if (await sessions.RenewIfDueAsync(CancellationToken.None))
                     {
                         var s = sessions.Current!;
+                        egress.SetLiveSession(s.SessionId); // same id, but refreshes the lease the sidecar sees
                         Step("Renewed", $"same session {s.SessionId} · NEW cert {s.CertificateSerialNumber[..8]}… · " +
                                         $"lease to {s.LeaseExpiresAt.ToLocalTime():HH:mm:ss}");
                     }

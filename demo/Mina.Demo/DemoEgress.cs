@@ -16,6 +16,14 @@ internal interface IDemoEgress : IAsyncDisposable
 
     /// <summary>What this egress is, shown to the operator so the demo never overstates itself.</summary>
     string Description { get; }
+
+    /// <summary>
+    /// Tells the egress which session is live, if any. On the real Envoy this is what admits or
+    /// refuses a tunnel (D-19, M4-11) — a certificate alone is no longer enough. The stub does not
+    /// implement session admission at all (it never did; D-14 predates it and the stub is scoped to
+    /// mTLS + CONNECT), so a null session there changes nothing observable.
+    /// </summary>
+    void SetLiveSession(Guid? sessionId);
 }
 
 /// <summary>
@@ -26,12 +34,14 @@ internal interface IDemoEgress : IAsyncDisposable
 internal sealed class EnvoyDemoEgress : IDemoEgress
 {
     private readonly EnvoyProcess _envoy;
+    private readonly SidecarAdmissionHost _admission;
 
     private readonly CancellationTokenSource _stopping = new();
 
-    private EnvoyDemoEgress(EnvoyProcess envoy, string serverName)
+    private EnvoyDemoEgress(EnvoyProcess envoy, SidecarAdmissionHost admission, string serverName)
     {
         _envoy = envoy;
+        _admission = admission;
         ServerName = serverName;
     }
 
@@ -43,11 +53,31 @@ internal sealed class EnvoyDemoEgress : IDemoEgress
 
     public string Description => "real Envoy (egress-node/envoy/envoy-bootstrap.yaml)";
 
+    public void SetLiveSession(Guid? sessionId)
+    {
+        if (sessionId is { } id)
+        {
+            _admission.Admit(id);
+        }
+        else
+        {
+            _admission.RevokeAll();
+        }
+    }
+
     public static async Task<EnvoyDemoEgress> StartAsync(
         string binary, CertificateAuthority authority, string serverName, Action<string> onHostname)
     {
-        var envoy = await EnvoyProcess.StartAsync(binary, authority, serverName).ConfigureAwait(false);
-        var demo = new EnvoyDemoEgress(envoy, serverName);
+        // Since M4-11 the real Envoy config admits nothing without the sidecar's ext_authz answer,
+        // so this demo runs the same admission host the real-Envoy interop tests use — a real
+        // Kestrel gRPC service on the Unix socket Envoy is configured to call, not a stand-in for
+        // the check itself. Starting with no session admitted, matching a freshly booted node.
+        var work = Directory.CreateTempSubdirectory("mina-demo-envoy");
+        var admission = await SidecarAdmissionHost.StartAsync(EnvoyProcess.AuthzSocketPathFor(work)).ConfigureAwait(false);
+        admission.RevokeAll(); // loads the view (empty) rather than leaving it "never refreshed"
+
+        var envoy = await EnvoyProcess.StartAsync(binary, authority, serverName, workingDirectory: work).ConfigureAwait(false);
+        var demo = new EnvoyDemoEgress(envoy, admission, serverName);
 
         // Envoy writes its access log to a file — the same one the node sidecar consumes — so the
         // demo follows that file rather than the process's stdout.
@@ -122,6 +152,7 @@ internal sealed class EnvoyDemoEgress : IDemoEgress
         await _stopping.CancelAsync().ConfigureAwait(false);
         _stopping.Dispose();
         await _envoy.DisposeAsync().ConfigureAwait(false);
+        await _admission.DisposeAsync().ConfigureAwait(false);
     }
 }
 
@@ -151,6 +182,12 @@ internal sealed class StubDemoEgress : IDemoEgress
     public string ServerName { get; }
 
     public string Description => "in-process stand-in (set MINA_ENVOY to run the real Envoy instead)";
+
+    public void SetLiveSession(Guid? sessionId)
+    {
+        // No-op: the stub never implemented session admission (it predates D-19/M4-11 and is
+        // scoped to mTLS + CONNECT only), so there is nothing here for a session to change.
+    }
 
     public static StubDemoEgress Start(CertificateAuthority authority, string serverName, Action<string> onHostname)
     {

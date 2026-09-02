@@ -236,6 +236,13 @@ static_resources:
       healthy_threshold: 1
       http_health_check:
         path: /healthz
+        # The cluster's protocol_options above make ext_authz's own traffic HTTP/2, but the active
+        # health checker does not inherit that — HealthCheck.http_health_check.codec_client_type
+        # defaults to HTTP1 regardless of the cluster's configured protocol. Left at the default,
+        # every check was answered "400: An HTTP/1.x request was sent to an HTTP/2 only endpoint"
+        # and the cluster stayed permanently unhealthy, which took the health listener below down
+        # with it — discovered by actually running this against the sidecar, not by inspection.
+        codec_client_type: HTTP2
     load_assignment:
       cluster_name: mina_sidecar_authz
       endpoints:

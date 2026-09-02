@@ -140,6 +140,71 @@ public sealed class EnvoySessionAdmissionTests
         Assert.Equal(403, status);
     }
 
+    [SkippableFact]
+    public async Task The_health_listener_reflects_whether_the_sidecar_is_actually_healthy()
+    {
+        // The load balancer probes this, not the tunnel port (M4-11) — specifically because a node
+        // can keep accepting TCP on the tunnel port while its admission path is dead. A codec
+        // mismatch between the active health check and the sidecar's HTTP/2-only socket once left
+        // this permanently 503 even with a perfectly healthy sidecar; found by curling the stack
+        // interactively, not by any assertion, because every other test here talks to the sidecar
+        // directly over gRPC and never went through Envoy's own active health check at all.
+        var envoyPath = EnvoyProcess.LocateBinary();
+        Skip.If(envoyPath is null, "Set MINA_ENVOY to an Envoy binary to run the interop test.");
+
+        using var ca = CertificateAuthority.Create("Mina Health CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
+        var work = Directory.CreateTempSubdirectory("mina-envoy");
+        await using var admission = await SidecarAdmissionHost.StartAsync(EnvoyProcess.AuthzSocketPathFor(work));
+        // A real sidecar's refresh loop calls Update() on every tick, including a tick that finds
+        // zero live sessions — that is what makes /healthz report healthy at all. The bare test
+        // host does not run that loop, so the test drives it once itself to reach the same state a
+        // freshly booted, otherwise-idle sidecar would be in.
+        admission.RevokeAll();
+        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName, workingDirectory: work);
+
+        Assert.True(
+            await WaitForHealthAsync(envoy.HealthPort, expectHealthy: true),
+            "the health listener never reported healthy with a live sidecar answering");
+    }
+
+    [SkippableFact]
+    public async Task The_health_listener_reports_unhealthy_with_no_sidecar_at_all()
+    {
+        var envoyPath = EnvoyProcess.LocateBinary();
+        Skip.If(envoyPath is null, "Set MINA_ENVOY to an Envoy binary to run the interop test.");
+
+        using var ca = CertificateAuthority.Create("Mina Health CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
+        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName);
+
+        Assert.True(
+            await WaitForHealthAsync(envoy.HealthPort, expectHealthy: false),
+            "the health listener reported healthy with no sidecar reachable at all");
+    }
+
+    private static async Task<bool> WaitForHealthAsync(int healthPort, bool expectHealthy)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                using var response = await http.GetAsync(new Uri($"http://127.0.0.1:{healthPort}/healthz"));
+                var healthy = response.StatusCode == System.Net.HttpStatusCode.OK;
+                if (healthy == expectHealthy)
+                {
+                    return true;
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+            }
+
+            await Task.Delay(500);
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// One CONNECT to a local target through the real mTLS ingress; returns the HTTP status Envoy
     /// answered with, or null if the connection died without one.
