@@ -122,6 +122,7 @@ After Phase 0 approval:
     terraform/
       modules/
       environments/dev/
+      environments/dev-onprem/
       environments/test/
       environments/prod/
   control-plane/
