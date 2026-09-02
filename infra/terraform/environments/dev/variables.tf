@@ -73,3 +73,15 @@ variable "export_activity_log" {
   type        = bool
   default     = false
 }
+
+variable "alert_email_receivers" {
+  description = <<-EOT
+    Addresses notified when anything happens to the CA vault or the audit-anchor store. Leaving this
+    empty creates no alert rules — deliberately, because an alert with no receiver looks like
+    coverage and reaches nobody.
+
+    These fire on your own Terraform applies too. That is intended.
+  EOT
+  type        = list(string)
+  default     = []
+}

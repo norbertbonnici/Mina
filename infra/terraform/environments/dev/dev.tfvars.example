@@ -34,3 +34,7 @@ control_plane_egress_cidrs = ["203.0.113.20/32"]
 # to a workspace outside this subscription, which is better: it does not share a blast radius with
 # what it watches.
 export_activity_log = false
+
+# Who hears about it when anything touches the CA vault or the audit anchors, including a delete
+# refused by the immutability policy. Empty creates no alert rules at all.
+alert_email_receivers = ["soc@fiaumalta.org"]

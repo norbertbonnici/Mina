@@ -22,3 +22,8 @@ output "diagnostics_workspace_id" {
   description = "Log Analytics workspace carrying CA key use and audit-anchor access."
   value       = azurerm_log_analytics_workspace.cp.id
 }
+
+output "alerting_enabled" {
+  description = "False when no receiver was configured, in which case nothing is alerting (M6-14)."
+  value       = length(var.alert_email_receivers) > 0 || var.alert_webhook_uri != null
+}

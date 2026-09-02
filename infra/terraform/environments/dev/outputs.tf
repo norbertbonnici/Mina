@@ -27,3 +27,8 @@ output "activity_log_exported" {
   description = "Whether ARM operations against this subscription are being recorded (M6-13)."
   value       = module.activity_log.enabled
 }
+
+output "alerting_enabled" {
+  description = "False when no receiver is configured, in which case nothing alerts on the audit anchors."
+  value       = module.control_plane_azure.alerting_enabled
+}

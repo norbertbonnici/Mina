@@ -30,8 +30,8 @@ Status: Phase 0 — Proposed. Versioned; breaking changes bump `schema` and requ
 ```
 
 `user`/`device`/`session` are null where not applicable (e.g. platform events). `data` carries
-the per-type payload below. Transport to Wazuh: JSON over the D-05 relay path; one event per
-record; at-least-once with `event_id` de-duplication.
+the per-type payload below. Transport to Wazuh: JSON from the on-premises relay, a local hop since ADR-0006 (the ADR-0005
+tunnel path is superseded); one event per record; at-least-once with `event_id` de-duplication.
 
 ## 3. Audit/security event catalogue
 
@@ -120,7 +120,7 @@ mina-egress-node | mina-endpoint-agent), `deployment.environment`, `mina.region`
 
 Endpoint agent → control plane over the authenticated API (batched, non-blocking; drops
 operational — never audit — data under backpressure). Nodes buffer locally (disk-bounded) when
-the relay is unreachable; `audit_pipeline_degraded` fires past thresholds. Control-plane audit
+the published control-plane endpoint is unreachable; `audit_pipeline_degraded` fires past thresholds. Control-plane audit
 writes are synchronous with the action they record: if the audit store is unavailable,
 governance actions fail closed (the action does not proceed unlogged).
 

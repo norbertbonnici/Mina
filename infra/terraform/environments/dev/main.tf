@@ -22,6 +22,10 @@ module "control_plane_azure" {
   key_vault_sku            = "standard"
   audit_immutability_state = "Unlocked"
   audit_retention_days     = 7
+
+  # Who hears about it when something happens to the CA vault or the audit anchors (M6-14). Empty
+  # means no alert rules are created at all — see the variable for why that is the honest default.
+  alert_email_receivers = var.alert_email_receivers
 }
 
 # Dev PoC stamp: single node, burstable SKU (docs/COST_MODEL.md §3), one region (D-04).

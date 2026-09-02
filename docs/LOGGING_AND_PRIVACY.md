@@ -31,12 +31,19 @@ subject-inference risk.
 
 | Class | Content | Store | Wazuh? | SigNoz? | Suppressible? |
 |---|---|---|---|---|---|
-| C1 Governance audit | auth results, session lifecycle, approvals, policy/admin, break-glass | SQL `audit` schema (append-only, hash-chained) + WORM export | Yes | No | **Never** |
-| C2 Session metadata | user, device, session ID, region, timestamps, aggregate counters | SQL audit schema | In events | Counts only | **Never** |
-| C3 Hostname telemetry | per-connection hostname/port/bytes (mina.hostname.v1) | SQL telemetry schema | **No** | **No** | Yes — sensitive sessions |
+| C1 Governance audit | auth results, session lifecycle, approvals, policy/admin, break-glass | On-premises SQL Server `audit` schema (append-only, hash-chained) + Azure immutable-blob anchors | Yes | No | **Never** |
+| C2 Session metadata | user, device, session ID, region, timestamps, aggregate counters | On-premises SQL audit schema | In events | Counts only | **Never** |
+| C3 Hostname telemetry | per-connection hostname/port/bytes (mina.hostname.v1) | On-premises SQL telemetry schema | **No** | **No** | Yes — sensitive sessions |
 | C4 Full-URL telemetry | paths/queries | **Not collected** (exists only if ADR-0002 Option 2/3 ever approved) | No | No | Yes |
 | C5 Operational telemetry | metrics/traces/logs, scrubbed of research content | SigNoz | No | Yes | n/a |
-| C6 Justifications | sensitive-session justification references | SQL audit schema | Reference only | No | Never (but keep to case references, not content) |
+| C6 Justifications | sensitive-session justification references | On-premises SQL audit schema | Reference only | No | Never (but keep to case references, not content) |
+
+**Residency (ADR-0006).** Every class above resides on FIAU infrastructure. Two things leave the
+premises, neither of which carries research content: the CA signing key, generated and used inside
+Azure Key Vault and never exported, and the audit export anchors — hash-chain checkpoints of C1,
+written to Azure immutable storage precisely because tamper evidence anchored to a filesystem the same
+administrator controls is not evidence. The egress nodes hold C3 only transiently before ingest, and
+withhold destinations locally for a suppressed session.
 
 Access to C3 (and C6) is role-restricted and **itself audited** (threat N10: telemetry must not
 become an unsupervised instrument against analysts).
@@ -62,7 +69,8 @@ become an unsupervised instrument against analysts).
 Security/audit events per `docs/EVENT_SCHEMAS.md` §3: authentication failures, unauthorised
 actions, policy changes, approval decisions, suspicious client state, egress-node security
 events, suppression mismatches, and all break-glass use. **Wazuh never receives URL or hostname
-content** — including for default sessions.
+content** — including for default sessions. Delivery is a local hop from the on-premises relay
+(ADR-0006); no tunnel or public log endpoint is involved.
 
 ## 6. SigNoz
 

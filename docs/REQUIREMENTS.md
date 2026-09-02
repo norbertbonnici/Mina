@@ -6,6 +6,8 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 ## 2. Scope
 ### In scope
 - Azure-hosted internet egress for a dedicated Edge research context.
+- Control plane on the FIAU Proxmox cluster, with Azure Key Vault and immutable blob storage as its
+  only Azure dependencies (ADR-0006).
 - Entra SSO and authorisation.
 - Windows 11 / Intune-managed endpoint integration.
 - Analyst selection of approved EU egress regions.
@@ -53,7 +55,7 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 | SR-002 | No unauthenticated forwarding or open-proxy behaviour. |
 | SR-003 | Explicitly mitigate/test DNS, IPv6, WebRTC and fallback leaks. |
 | SR-004 | Use least privilege for Azure RBAC, applications, managed identities and administrators — **and, since ADR-0006, for the on-premises plane: Proxmox administrative access, the SQL Server host and its sysadmin roles, and local OS accounts on the control-plane VMs.** |
-| SR-005 | Prefer managed identities and Key Vault over static credentials. |
+| SR-005 | Prefer managed identities and Key Vault over static credentials. On premises this means Azure Arc managed identities for SQL Server, Key Vault and storage (D-17/D-18); no stored credential anywhere in the product. |
 | SR-006 | Protect endpoint local IPC and configuration from ordinary-user tampering. |
 | SR-007 | Apply Entra Conditional Access/device compliance where feasible. |
 | SR-008 | Separate platform administration and approval authority where practical. |
@@ -76,4 +78,6 @@ Provide authorised analysts with an organisation-controlled, governed research-b
 - EU egress at launch.
 - At least two production egress regions are desirable for hardened production, subject to Phase 0 design/cost review.
 - Health monitoring, capacity monitoring and alerting must be defined before production.
+- Control-plane availability — Proxmox HA, SQL Server backup/restore, uptime of the published
+  node-facing endpoint — is FIAU-provided since ADR-0006 and must be defined before production (M6-9).
 - Production deployment requires explicit human approval.

@@ -209,3 +209,125 @@ resource "azurerm_monitor_diagnostic_setting" "audit_blobs" {
     category = "StorageDelete"
   }
 }
+
+# ---------------------------------------------------------------------------------------------
+# Alerting on destructive operations (M6-14)
+# ---------------------------------------------------------------------------------------------
+#
+# Export is not detection. M6-13 puts ARM operations in a workspace; these raise a human when the
+# operations are against the two resources that hold the platform's roots of trust.
+#
+# The criteria deliberately do NOT enumerate operation names. Naming
+# Microsoft.KeyVault/vaults/delete and friends looks precise and creates a silent gap: any operation
+# not on the list passes unnoticed, and a rule that never fires is indistinguishable from one with
+# nothing to report. Instead each rule matches ANY Administrative operation on its resource. That is
+# viable because these resources are supposed to be inert — Terraform creates them and nothing
+# touches them again — so the alert is low-volume and high-signal, and it catches the operations
+# nobody thought to enumerate.
+#
+# The corollary is that a Terraform apply against this module will raise these alerts. That is
+# correct behaviour, not noise: a change to the vault holding the CA key or the store holding the
+# audit anchors should be something a human sees, including when it is you.
+#
+# No status filter, on purpose. A *failed* delete against the audit anchors is the more interesting
+# event of the two: it is what the immutability policy refusing an attempt looks like.
+
+locals {
+  alerting_enabled = length(var.alert_email_receivers) > 0 || var.alert_webhook_uri != null
+}
+
+resource "azurerm_monitor_action_group" "cp" {
+  count = local.alerting_enabled ? 1 : 0
+
+  name                = "ag-${var.prefix}-cp"
+  resource_group_name = azurerm_resource_group.control.name
+  short_name          = "minacp"
+
+  dynamic "email_receiver" {
+    for_each = { for idx, address in var.alert_email_receivers : idx => address }
+
+    content {
+      name                    = "email-${email_receiver.key}"
+      email_address           = email_receiver.value
+      use_common_alert_schema = true
+    }
+  }
+
+  dynamic "webhook_receiver" {
+    for_each = var.alert_webhook_uri == null ? [] : [var.alert_webhook_uri]
+
+    content {
+      name                    = "webhook"
+      service_uri             = webhook_receiver.value
+      use_common_alert_schema = true
+    }
+  }
+
+  tags = merge(var.tags, { "mina:plane" = "control" })
+}
+
+resource "azurerm_monitor_activity_log_alert" "ca_key_vault" {
+  count = local.alerting_enabled ? 1 : 0
+
+  name                = "alert-${var.prefix}-ca-vault"
+  resource_group_name = azurerm_resource_group.control.name
+  location            = "global"
+  scopes              = [azurerm_key_vault.cp.id]
+  description         = "Any ARM operation against the vault holding the internal CA signing key."
+
+  criteria {
+    category    = "Administrative"
+    resource_id = azurerm_key_vault.cp.id
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.cp[0].id
+  }
+
+  tags = merge(var.tags, { "mina:plane" = "control" })
+}
+
+resource "azurerm_monitor_activity_log_alert" "audit_store" {
+  count = local.alerting_enabled ? 1 : 0
+
+  name                = "alert-${var.prefix}-audit-store"
+  resource_group_name = azurerm_resource_group.control.name
+  location            = "global"
+  scopes              = [azurerm_storage_account.audit.id]
+  description         = "Any ARM operation against the audit-anchor store, including refused deletes."
+
+  criteria {
+    category    = "Administrative"
+    resource_id = azurerm_storage_account.audit.id
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.cp[0].id
+  }
+
+  tags = merge(var.tags, { "mina:plane" = "control" })
+}
+
+# Privilege escalation is the step before the other two. Someone who cannot delete the audit store
+# today grants themselves the role that lets them, and that grant is itself an ARM operation.
+resource "azurerm_monitor_activity_log_alert" "role_assignments" {
+  count = local.alerting_enabled ? 1 : 0
+
+  name                = "alert-${var.prefix}-cp-role-changes"
+  resource_group_name = azurerm_resource_group.control.name
+  location            = "global"
+  scopes              = [azurerm_resource_group.control.id]
+  description         = "Role assignment changes in the control-plane resource group."
+
+  criteria {
+    category          = "Administrative"
+    resource_group    = azurerm_resource_group.control.name
+    resource_provider = "Microsoft.Authorization"
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.cp[0].id
+  }
+
+  tags = merge(var.tags, { "mina:plane" = "control" })
+}

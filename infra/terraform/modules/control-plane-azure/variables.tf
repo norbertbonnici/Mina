@@ -103,3 +103,22 @@ variable "diagnostics_daily_quota_gb" {
   type        = number
   default     = null
 }
+
+variable "alert_email_receivers" {
+  description = <<-EOT
+    Addresses notified when anything happens to the CA vault or the audit-anchor store. Empty
+    disables the alert rules entirely — and an empty list is the honest default, because an alert
+    with no receiver is worse than none: it looks like coverage in a plan and reaches nobody.
+
+    Expect these to fire on your own Terraform applies. That is intended: a change to the vault
+    holding the CA signing key should be something a human sees, including when it is you.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "alert_webhook_uri" {
+  description = "Optional webhook for the same alerts, for example a SIEM or chat integration."
+  type        = string
+  default     = null
+}

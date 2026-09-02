@@ -1,13 +1,17 @@
 # Architecture
 
-Status: **Approved direction (D-01…D-04, 2026-08-31)** — implementation may proceed through
-M0–M2; the steering design remains conditional on the M1-5 verification register (§13), and the
-open decisions in `docs/PHASE0_DECISIONS.md` gate their referenced milestones.
-Date: 2026-08-31
+Status: **Approved direction (D-01…D-04, 2026-08-31), amended by ADR-0006 (D-16…D-18,
+2026-09-01)** — implementation may proceed through M0–M3 and M6; the steering design remains
+conditional on the M1-5 verification register (§13), and the open decisions in
+`docs/PHASE0_DECISIONS.md` gate their referenced milestones.
+Date: 2026-08-31, revised 2026-09-02 for ADR-0006
 
 The approved choices: steering/transport per **ADR-0001** (Option C, variant C2, mTLS HTTP/2
 transport), URL telemetry per **ADR-0002** (Option 1, hostname-at-egress, no TLS interception),
-sensitive sessions per **ADR-0003**, .NET stack per **ADR-0004**.
+sensitive sessions per **ADR-0003**, .NET stack per **ADR-0004**, and a **hybrid hosting model per
+ADR-0006**: the control plane on the FIAU Proxmox cluster, the egress stamps in Azure, and only Key
+Vault and immutable blob storage still used from Azure by the control plane. ADR-0005 (telemetry over
+the Check Point tunnel) is superseded by ADR-0006 and retained for the record only.
 
 ## 1. Objective
 
@@ -31,12 +35,17 @@ flowchart LR
 
     OTHER -- "normal corporate egress (unchanged)" --> INET1[(Internet)]
 
-    subgraph AZC["Azure — control plane (per env)"]
-        API["Control-plane API<br/>(ASP.NET Core)"]
-        UI["Management UI<br/>(Blazor)"]
-        SQL[("Azure SQL<br/>sessions, approvals, audit")]
-        KV["Key Vault<br/>(internal CA key, secrets)"]
-        RELAY["Telemetry relay<br/>(Wazuh/SigNoz forwarding)"]
+    subgraph ONP["FIAU on premises — control plane (DMZ VLAN on Proxmox, ADR-0006)"]
+        PROXY["Publishing reverse proxy<br/>(node-facing listener only)"]
+        API["Control-plane API<br/>(ASP.NET Core, two listeners)"]
+        UI["Management UI<br/>(Blazor, corporate listener only)"]
+        SQL[("SQL Server, Arc-enabled<br/>sessions, approvals, audit, telemetry")]
+        RELAY["Telemetry relay<br/>(Wazuh/SigNoz, local hop)"]
+    end
+
+    subgraph AZS["Azure — retained by the control plane (per env)"]
+        KV["Key Vault<br/>(internal CA signing key)"]
+        BLOB["Immutable blob storage<br/>(audit export anchors)"]
     end
 
     subgraph AZE["Azure — egress stamp (per approved EU region)"]
@@ -45,25 +54,33 @@ flowchart LR
         NAT["NAT Gateway<br/>static egress IP prefix"]
     end
 
-    AG -- "1. Entra auth (WAM) + session request" --> API
+    AG -- "1. Entra auth (WAM) + session request<br/>(corporate-facing listener)" --> API
     AG -- "2. mTLS HTTP/2 tunnel" --> LB --> ENV -- SNAT --> NAT --> INET2[(Internet<br/>research targets)]
-    API <-- "session allowlist, suppression flags,<br/>hostname telemetry return" --> ENV
+    ENV -- "allowlist pull + telemetry push,<br/>public TLS to the published endpoint" --> PROXY --> API
     ENTRA["Microsoft Entra ID<br/>+ Conditional Access + Intune compliance"] --- API
     ENTRA --- AG
     UI --- API
     API --- SQL
-    API --- KV
+    API -- "Arc managed identity, outbound" --> KV
+    API -- "Arc managed identity, outbound" --> BLOB
     RELAY --> WZ["Wazuh (org)"]
     RELAY --> SN["SigNoz (org)"]
 ```
 
-Two Azure planes, deliberately separated:
+Two planes, deliberately separated and, since ADR-0006, hosted in different places:
 
-- **Control plane** (one per environment): session issuance, policy, approvals, audit store,
-  management UI, internal CA, telemetry forwarding. Never carries research traffic.
-- **Egress data plane** (one stamp per approved region): authenticated proxy nodes behind a
+- **Control plane** (one per environment, on the FIAU Proxmox cluster): session issuance, policy,
+  approvals, audit store, management UI, internal CA front-end, telemetry forwarding. Never carries
+  research traffic. Uses two Azure services outbound — Key Vault for the CA signing key and immutable
+  blob storage for audit anchors — and nothing else in Azure.
+- **Egress data plane** (one Azure stamp per approved region): authenticated proxy nodes behind a
   public ingress IP, SNATing to dedicated static egress IPs. Never stores governance state;
-  holds only ephemeral session allowlists pushed/pulled from the control plane.
+  holds only ephemeral session allowlists pulled from the control plane's published endpoint.
+
+The planes meet at exactly one internet-facing endpoint on each side: the stamp's ingress IP, used
+only by the endpoint agent's mTLS tunnel, and the control plane's published node-facing listener,
+used only by the stamps' sidecars. Neither plane has a routed path to the other or to corporate
+networks.
 
 ## 3. Components
 
@@ -149,8 +166,9 @@ corporate networks — they call a public endpoint, exactly as they called an Az
 Both hosts must supply what App Service used to: forwarded-header handling behind the reverse
 proxy, a persisted Data Protection key ring, and configuration that is verified at startup — a
 missing connection string now refuses the host rather than selecting an in-memory store.
-- **Telemetry relay**: forwards audit/security events to Wazuh and OTLP telemetry to SigNoz
-  (network path is decision D-05, §10.3).
+- **Telemetry relay**: forwards audit/security events to Wazuh and OTLP telemetry to SigNoz.
+  Both receivers are on the FIAU network, so delivery is a local hop (§10.3); ADR-0005's tunnel
+  path is superseded.
 
 ### 3.3 Egress data plane (Azure, per approved region)
 
@@ -173,17 +191,19 @@ missing connection string now refuses the host rather than selecting an in-memor
   quickly a session stops being admitted. It ships Envoy telemetry to the control plane/relay and
   runs the Wazuh agent.
 - **NSG/route posture**: outbound to Internet allowed; outbound to RFC1918, Azure service tags
-  for corp-peered ranges, and the corporate public CIDRs **denied**; no VNet peering to
-  anything except (optionally) the control-plane VNet for config — and even that is
-  API-over-TLS, not routed reachability, if D-05 resolves to relay-in-control-plane.
+  for corp-peered ranges, and the corporate public CIDRs **denied**; no VNet peering, no gateway,
+  no UDR toward anything. The control plane is reached at its published public endpoint over TLS
+  like any other internet destination (ADR-0006 constraint 5), so there is no control-plane VNet
+  to peer with and the blanket deny has no exceptions.
 
 ## 4. Identity and access
 
 - **Entra applications**: one enterprise app for the platform with app roles
   `Mina.Analyst`, `Mina.Approver`, `Mina.Admin`, group-assigned. Endpoint agent registered as a
   public client using the WAM broker (silent SSO from the existing Windows session — FR-002);
-  management UI as a confidential client; egress node sidecars and control plane use Azure
-  managed identities (no client secrets anywhere in the product).
+  management UI as a confidential client; egress node sidecars use the VMSS managed identity, and
+  the on-premises control-plane hosts use their Azure Arc system-assigned managed identity for
+  SQL Server (D-17), Key Vault and blob storage (D-18) — no client secrets anywhere in the product.
 - **Conditional Access**: policy targeting the Mina app requiring compliant (Intune) device and
   the org's MFA baseline. Device identity/compliance is evaluated at token issuance via the
   WAM/PRT flow; the control plane records the device ID per session (FR-003, SR-007).
@@ -311,7 +331,9 @@ suppression markers, aggregate counters, and the mandatory metadata set (ADR-000
 ## 8. Azure resource design
 
 Environments `dev`, `test`, `prod` as separate Terraform states (and ideally subscriptions);
-naming `rg-mina-<plane>-<env>[-<region>]`.
+naming `rg-mina-<plane>-<env>[-<region>]`. The on-premises plane has its own state per environment
+(`environments/dev-onprem`, module `control-plane-onprem`) against the Proxmox API, with the API
+token taken from the environment so it never enters a variable, a tfvars file or state.
 
 **Control plane — on premises (per env), FIAU Proxmox cluster (ADR-0006):**
 
@@ -350,8 +372,8 @@ with further approved regions activated on demand (~€240/mo each, COST_MODEL).
 ## 9. Capacity and availability
 
 50 concurrent analysts browsing is small: plan ~2–10 Mbps sustained aggregate per region with
-bursts; 2 × D2as_v5 Envoy nodes are comfortably over-provisioned (headroom + N+1). Azure SQL at
-GP serverless handles the write rates (hostname telemetry est. < 10 events/s aggregate).
+bursts; 2 × D2as_v5 Envoy nodes are comfortably over-provisioned (headroom + N+1). SQL Server on a
+modest Proxmox VM handles the write rates (hostname telemetry est. < 10 events/s aggregate).
 Scale-out is VMSS instance count; scale-up is SKU. NAT GW SNAT ports are a non-issue at this
 scale (64k/IP × 4 IPs).
 
@@ -360,6 +382,13 @@ region, so a full region outage pauses research browsing (fail-closed — never 
 another approved region's stamp is activated from IaC. This is an accepted availability
 trade-off, revisited when usage justifies a standing second stamp; node-level HA within the
 stamp (2+ instances, zones optional) still applies in production.
+
+Control-plane availability is the FIAU's to provide since ADR-0006: Proxmox cluster HA, SQL Server
+backup/restore and the published endpoint's uptime replace what App Service and Azure SQL managed.
+The on-premises environment is one of each host today (M6-2); running two instances is a design
+question in its own right (ADR-0006, "More than one instance") and the background-service lease is
+backlog M6-10. An outage stops session issuance and renewal within one lease period — the platform
+failing closed — and `docs/OPERATIONS.md` lists the runbooks.
 
 ## 10. Audit and telemetry
 
@@ -416,9 +445,14 @@ existing enterprise mechanisms — **no application backdoor exists**:
   policies that could lock admins out, credentials vaulted offline under management custody,
   sign-in monitored: any use → high-severity Wazuh event via the Entra sign-in log export
   (AC-015, SR-009).
-- Azure RBAC emergency group (PIM-eligible, approval-gated) able to operate the platform
-  directly (e.g. disable an egress region by stopping the VMSS/LB) when the control plane is
-  down. All activity-log events for these principals → high-severity Wazuh events.
+- Azure RBAC emergency group (PIM-eligible, approval-gated) able to operate the **Azure** half of
+  the platform directly (e.g. disable an egress region by stopping the VMSS/LB) when the control
+  plane is down. All activity-log events for these principals → high-severity Wazuh events.
+- **Gap since ADR-0006:** Azure RBAC cannot touch a Proxmox-hosted API, portal or database, so
+  regaining administrative control of the on-premises plane when Entra sign-in fails has no
+  mechanism yet. It needs the same shape — enterprise-standard emergency access to Proxmox and the
+  SQL host under management custody, every use alerted at high severity — and is backlog M6-8. D-10
+  is to be extended for it, not reinterpreted.
 - Analyst-facing componentry contains no break-glass code paths, credentials, or configuration.
 - Every use triggers the post-use review runbook (`docs/OPERATIONS.md`).
 

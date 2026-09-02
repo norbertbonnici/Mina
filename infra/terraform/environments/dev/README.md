@@ -54,11 +54,24 @@ retention period; that is a production-gate item, not a default this environment
 The Key Vault SKU is `standard` here (software-protected). The CA signing key warrants `premium` and
 its HSM in production.
 
+## Check these two outputs after applying
+
+`audit_anchors_are_immutable` and `alerting_enabled` both report **false** unless you configure
+them, and both describe controls that a plan otherwise appears to have. The first is expected in
+dev (see above). The second means no alert rules exist: set `alert_email_receivers` if you want to
+hear about anything touching the CA vault or the audit anchors — including a delete the immutability
+policy refused, which is what an attempt at tampering looks like from outside.
+
+Those alerts fire on your own `terraform apply` too. That is intended rather than noise: these two
+resources are meant to be inert after creation, so any ARM operation on them is worth a human
+looking, including when it is you.
+
 ## Two things a green apply will not give you
 
-1. **The control plane.** It runs on Proxmox and nothing in this repository provisions it yet
-   (backlog M6-2). Until it exists the nodes have nothing to fetch an allowlist from and no analyst
-   can be issued a session.
+1. **The control plane.** It runs on Proxmox and is provisioned separately from `../dev-onprem`
+   (M6-2 first cut: hosts, firewalls and the publishing proxy — no SQL Server, Arc onboarding or
+   application deployment yet). Until it is up the nodes have nothing to fetch an allowlist from and
+   no analyst can be issued a session.
 2. **A production-capable CA or audit sink.** `M2-2c` (Key Vault-backed CA) and `M6-6` (immutable
    blob audit sink) are unbuilt, so the control plane still refuses to start outside Development
    unless `Mina:AllowDevelopmentFallbacks=true` — which means an ephemeral CA and a filesystem sink.

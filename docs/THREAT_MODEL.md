@@ -2,7 +2,8 @@
 
 Status: **Phase 0 expansion — Proposed** (baseline retained and extended; expand again whenever
 the architecture changes)
-Scope: architecture per `docs/ARCHITECTURE.md` (ADR-0001 Option C/C2, ADR-0002 Option 1).
+Scope: architecture per `docs/ARCHITECTURE.md` (ADR-0001 Option C/C2, ADR-0002 Option 1, hybrid
+hosting per ADR-0006 — revised 2026-09-02).
 
 ## 1. Method
 
@@ -14,8 +15,9 @@ cases. Each threat maps to mitigations and to the test that proves the mitigatio
 ## 2. Assets (unchanged baseline + additions)
 
 Analyst identity and Entra tokens; managed endpoint and privileged agent; session credentials
-(client certs, internal CA key); Azure control plane and egress nodes; public egress IPs (and
-their **reputation**); URL/hostname telemetry; sensitive-session requests/justifications;
+(client certs, internal CA key in Key Vault); the on-premises control plane (Proxmox DMZ VLAN, its
+published node-facing endpoint, SQL Server) and the Azure egress nodes; the Arc managed identities
+of the control-plane hosts; public egress IPs (and their **reputation**); URL/hostname telemetry; sensitive-session requests/justifications;
 audit records; management and break-glass credentials; IaC/CI/CD/signing material;
 **subject-inference data** (any data from which research subjects can be inferred — hostnames,
 justification text, timing patterns).
@@ -24,7 +26,8 @@ justification text, timing patterns).
 
 External attacker; malicious website; compromised endpoint; stolen token/session; malicious or
 curious authorised analyst; malicious insider/administrator; compromised Azure workload or
-dependency; supply-chain attacker. Added: **research target performing counter-surveillance**
+dependency; compromised on-premises host or Proxmox/hypervisor administrator (ADR-0006);
+supply-chain attacker. Added: **research target performing counter-surveillance**
 (observes visits, probes egress IPs, attempts correlation).
 
 ## 4. Boundary analysis (STRIDE highlights)
@@ -67,6 +70,16 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 - **E:** node's managed identity abused to read governance data. *Mitigate:* API scopes the
   node identity to its own region's allowlist + telemetry ingest only. *Test:* RBAC boundary
   tests.
+- **I/E (published endpoint, ADR-0006):** the node-facing listener is internet-exposed from the
+  FIAU DMZ, so an attacker probes it for the portal, the audit read API or the route table.
+  *Mitigate:* split listeners discriminated by the accepting port, default deny for undeclared
+  endpoints (a wrong-method request cannot enumerate the management routes), the check running
+  before authentication; the reverse proxy has no server block for the management port; per-host
+  firewall admits the node port only from the proxy; public-CA TLS, rate limiting, optional source
+  restriction to the stamps' static NAT prefixes; the DMZ is firewalled from the corporate LAN.
+  *Test:* listener-separation suite (M6-3) + external scan of the published endpoint.
+- **D:** loss of the published endpoint stops allowlist pulls, telemetry and session renewal.
+  Fails closed within one lease period — availability, not safety (OPERATIONS runbook).
 
 ### B5. Control plane ↔ Entra
 - **S:** forged/replayed tokens. *Mitigate:* standard validation (issuer, audience, signing,
@@ -92,6 +105,22 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 - **E/T:** break-glass creds abused silently. *Mitigate:* vaulted offline custody, sign-in +
   activity-log export → high-severity Wazuh alerts, post-use review runbook, PIM approval for
   the RBAC group. *Test:* break-glass alerting drill (AC-015).
+- **Gap (ADR-0006):** the Azure RBAC group cannot reach a Proxmox-hosted API, portal or database,
+  so the on-premises plane has no break-glass mechanism yet — backlog M6-8.
+
+### B9. On-premises control plane ↔ Azure retained services (Key Vault, immutable blob)
+- **S/E:** a compromised control-plane host uses its Arc managed identity to sign certificates or
+  read anchors. *Mitigate:* identity scoped to sign/get on the CA key and write on the anchor
+  container only; Key Vault and storage firewalls admit only the control plane's egress addresses;
+  CA key use and anchor access recorded in Log Analytics (M6-11); ARM-level tamper (immutability
+  policy removal, vault purge) needs the subscription activity-log export (M6-13). *Test:* RBAC
+  boundary tests; alert drill on anomalous signing volume.
+- **T (on-premises administrator):** a Proxmox or SQL administrator alters audit rows or VM disks.
+  *Mitigate:* hash-chained audit trail anchored in write-once Azure storage the same administrator
+  does not control — D-18 exists for exactly this — and `/api/audit/verify`. *Test:* audit
+  completeness against anchors; tamper-then-verify.
+- **D:** Arc agent failure removes SQL authentication and Key Vault access at once, with no stored
+  credential to fall back on by design. Fails closed; OPERATIONS runbook.
 
 ## 5. Required scenarios (baseline retained, responses updated to the design)
 
@@ -108,7 +137,8 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 | Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017). Unchanged by ADR-0006, which deliberately declined the tunnel route: the on-premises control plane is reached at a published DMZ endpoint over the public internet, so this stays a blanket denial rather than becoming an allowlist |
 | Entra token stolen | Short session certs renewable only with fresh device-bound tokens. Revocation is refusal to renew, so the exposure window is the lease TTL (≈60 min) — **not** ≤30 s: the node performs no allowlist check before admitting a tunnel (D-14, M4-11) |
 | Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC. Blast radius is unchanged by ADR-0006: the node's reachable set is still the public internet plus one published control-plane endpoint, which is what it was when that endpoint was in Azure. What the endpoint exposes is bounded by the split listeners — the published listener carries only allowlist and telemetry ingest, never the portal or the audit read API |
-| Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence) |
+| Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence). Since ADR-0006 the store is on FIAU infrastructure and the anchors are in Azure immutable storage, so an on-premises administrator cannot make an alteration unanchored (D-18); anchor access is itself logged (M6-11) |
+| Published control-plane endpoint used to reach the portal, audit API or admin routes | Split listeners enforced by accepting port with default deny; the proxy has no management-port server block; host firewall; 404 before authentication (ADR-0006 constraint 1, M6-3) — see B4 |
 | Break-glass abused | §4/B8 |
 | Dependency compromised | SBOM + lockfiles (NuGet, container images, Envoy builds), pinned versions, scanning in CI, signed artefacts (SR-012) |
 
@@ -128,6 +158,8 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 | N10 | Hostname telemetry itself becomes a surveillance tool against analysts | Purpose limitation + access control on telemetry schema; access to telemetry is itself audited; retention minimised (D-09) |
 | N11 | Time-of-check gaps at browser startup (traffic before proxy/rules ready) | C2 rules are persistent (pre-exist launch); agent spawns browser only after listener up; startup capture test |
 | N12 | Endpoint DNS cache/prefetch leaks research names before proxying | Browser prefetch/preconnect disabled via flags for research instance; WFP DNS block for the binary; verify in Phase 1 |
+| N13 | Proxmox API token or the on-premises Terraform state exposed (ADR-0006) | Token read from the environment only — never a variable, tfvars or state; state in the same access-controlled Azure storage as the Azure environments (N6); cloud-init carries no secrets |
+| N14 | DMZ segment compromised via the published endpoint lands inside the FIAU perimeter | DMZ VLAN firewalled from the corporate LAN with only the platform's flows crossing; the endpoint carries two route families and nothing else; treated as internet-exposed infrastructure (patching, monitoring, rate limiting). Preferred over the tunnel alternative, where a compromised *egress node* would have had a routed corporate path |
 
 ## 7. Residual risks (accepted, to be re-reviewed at production gate)
 
@@ -135,7 +167,9 @@ dependency; supply-chain attacker. Added: **research target performing counter-s
 2. C1-only residual (if C2 rejected): manual research-profile launch leak — detective controls.
 3. Browser-process compromise rides the tunnel as the analyst (N3) — bounded by EDR/compliance.
 4. AAAA-only destinations unreachable (IPv4-only egress at MVP).
-5. Control-plane outage pauses new sessions (availability, not safety).
+5. Control-plane outage pauses new sessions and stops renewals within one lease period
+   (availability, not safety). Since ADR-0006 that availability is the FIAU's to provide: one of
+   each host today (M6-2), HA and backup/restore in M6-9.
 
 ## 8. Security testing required
 
@@ -144,4 +178,5 @@ open-proxy scans, RFC1918 reachability, suppression authz/expiry, role boundarie
 alerting, token expiry/revocation) — concretised with tooling, environments and evidence
 mapping in `docs/TEST_STRATEGY.md`. Additions from §6: rogue loopback client, IPC fuzzing,
 startup-capture, prefetch-leak, suppression fail-open discrepancy, SigNoz/Wazuh content-leak
-scans, signing/SBOM pipeline checks.
+scans, signing/SBOM pipeline checks; from ADR-0006: listener separation on the published endpoint,
+external scan of that endpoint, Arc identity scope, tamper-then-verify against the anchors.

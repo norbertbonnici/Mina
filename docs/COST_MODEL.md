@@ -1,31 +1,40 @@
-# Azure Resource Footprint and Cost Model
+# Resource Footprint and Cost Model
 
-Status: Phase 0 — **indicative only**. Figures are order-of-magnitude EUR/month at list prices
-from public pricing as known at design time; verify with the Azure pricing calculator and the
-organisation's agreement before the production go decision (D-11). Prices vary by region.
+Status: Phase 0 — **indicative only**, revised 2026-09-02 for ADR-0006. Figures are
+order-of-magnitude EUR/month at list prices from public pricing as known at design time; verify with
+the Azure pricing calculator and the organisation's agreement before the production go decision
+(D-11). Prices vary by region.
+
+Since ADR-0006 the platform is hybrid. **Azure** carries the egress stamps plus two small services
+the control plane uses outbound (Key Vault, immutable blob storage) and the Log Analytics workspace
+that records their use. **The FIAU Proxmox cluster** carries the control plane — proxy, application
+and SQL Server hosts — whose costs are FIAU-side and not priced here.
 
 ## 1. Assumptions
 
 - ~50 provisioned analysts, ~25 concurrent typical, browsing-class traffic.
 - Data volume: ~300 GB/month internet egress aggregate (browsing, generous).
-- MVP: 1 test region; Production proposal: control plane + 2 egress regions.
+- MVP: 1 test region; production launches with 1 active egress stamp (D-11), further approved
+  regions (D-08) activated on demand.
 - Dev/test run scaled-down SKUs and can be deallocated off-hours.
+- Log Analytics ingests Key Vault audit events, anchor-storage access logs and the Entra/Azure
+  activity exports for break-glass alerting — a small volume now that no App Service or Azure SQL
+  diagnostics flow into it.
 
-## 2. Production estimate
+## 2. Production estimate (Azure)
 
-Per D-11 (2026-08-31) production launches with **one active egress stamp**; the table below
-keeps the per-stamp figure so activating further approved regions (D-08) is a known increment.
-**Launch envelope: control plane + 1 stamp ≈ €610–1,110/mo**; each additional active region
-≈ €240/mo.
+Per D-11 (2026-08-31) production launches with **one active egress stamp**; the table keeps the
+per-stamp figure so activating further approved regions (D-08) is a known increment.
+**Launch envelope, Azure only: ≈ €270–340/mo**; each additional active region ≈ €240/mo. The D-11
+figure of €600–1,100/mo predates ADR-0006 and included App Service, Azure SQL and a relay that are no
+longer in Azure; the difference has moved to FIAU-side costs (§3), not disappeared.
 
 | Item | Sizing | Est. €/mo |
 |---|---|---|
-| App Service plan P1v3 (API + UI) | 1 plan, 2 apps | 110–150 |
-| Azure SQL Database GP | 2 vCore provisioned or serverless equivalent | 150–350 |
-| Key Vault | standard ops volume | 5–15 |
-| Storage (WORM audit + diagnostics) | < 100 GB | 5–15 |
-| Log Analytics | ~5–10 GB/day platform logs | 100–300 |
-| Telemetry relay | 1 small Container App/VM | 15–40 |
+| Key Vault (premium in production, for the HSM-backed CA key) | standard ops volume | 5–20 |
+| Storage (immutable/WORM audit anchors) | < 100 GB | 5–15 |
+| Log Analytics | ~0.5–1 GB/day (Key Vault + storage diagnostics, activity export) | 20–60 |
+| **Azure control-plane subtotal** | | **≈ 30–95** |
 | **Per active egress stamp (×1 at launch):** | | |
 | VMSS 2 × D2as_v5 | Envoy nodes | ~140 |
 | Standard LB + ingress IP | | ~25 |
@@ -33,31 +42,54 @@ keeps the per-stamp figure so activating further approved regions (D-08) is a kn
 | Data processing (NAT GW + LB) | ~150 GB/stamp | ~10 |
 | Internet egress bandwidth | ~150 GB/stamp beyond free tier | ~10 |
 | Stamp subtotal | | **~240 each** |
-| **Production total (launch, 1 stamp)** | | **≈ €610–1,110 / month** |
-| Production with a 2nd active region | | ≈ €850–1,350 / month |
+| **Production total, Azure (launch, 1 stamp)** | | **≈ €270–340 / month** |
+| Production with a 2nd active region | | ≈ €510–580 / month |
 
-## 3. Non-production
+Removed from the Azure bill by ADR-0006: App Service plan P1v3 (€110–150), Azure SQL Database GP
+(€150–350), telemetry relay (€15–40), and most of the former Log Analytics volume (€100–300).
+
+## 3. On-premises footprint (FIAU-side, not priced)
+
+| Item | Sizing (dev today; production to be sized in M6-9) | Cost owner |
+|---|---|---|
+| Publishing reverse proxy VM | 1 small VM in the DMZ VLAN | FIAU infrastructure |
+| Application VM (API + portal) | 1 VM; a second for HA is a design item (ADR-0006, M6-10) | FIAU infrastructure |
+| SQL Server VM (Azure Arc-enabled) | 1 VM; **SQL Server licensing** is the material line | FIAU licensing |
+| Azure Arc | Arc-enabled server registration is free; Arc-enabled SQL Server billing follows the licence model chosen (pay-as-you-go through Arc, or existing licences) | FIAU licensing |
+| Public-CA TLS certificate for the published endpoint | 1 certificate, renewed | FIAU (existing process) |
+| Backup, restore, cluster HA, patching, monitoring | Proxmox and SQL Server operations | FIAU operations |
+
+These replace platform-managed availability that App Service and Azure SQL used to provide, and are
+the reason M6-9 exists. They should be priced by the FIAU infrastructure team before the production
+go decision so that D-11's envelope can be restated as a whole-platform figure.
+
+## 4. Non-production (Azure)
 
 | Environment | Shape | Est. €/mo |
 |---|---|---|
-| dev | B-series app plan, serverless SQL (auto-pause), 1 × B2s single-node stamp, deallocatable | 80–150 |
-| test | production-shaped but 1 region, smaller VMSS | 250–450 |
+| dev | Key Vault (standard) + anchor storage (Unlocked) + Log Analytics, 1 × B2s single-node stamp, deallocatable | 40–90 |
+| test | production-shaped Azure side but 1 region, smaller VMSS | 150–300 |
 
-## 4. Major cost drivers and levers
+Each also needs a matching on-premises environment (`environments/dev-onprem`; test and prod to
+follow), sized by the FIAU infrastructure team. The dev Azure figure sits comfortably inside the D-04
+envelope (≤ €150/mo).
 
-1. **Log Analytics ingestion** is the most volatile line — cap with sampling/retention tiers;
-   security-relevant exports are small.
-2. **Azure SQL tier** — serverless with auto-pause suits dev/test; production sizing should
-   follow measured telemetry write rates (expected low).
-3. **Egress stamps scale linearly per region** — each approved region is ~€240/mo; keep the
-   approved list short until demand shows.
+## 5. Major cost drivers and levers
+
+1. **Egress stamps scale linearly per region** — each approved region is ~€240/mo and is now the
+   dominant Azure line; keep the approved list short until demand shows.
+2. **SQL Server licensing on premises** is the material new line and is FIAU-side; the licence
+   model chosen with Arc (M6-5) decides it.
+3. **Log Analytics ingestion** is small after ADR-0006 but still the most volatile Azure line —
+   keep retention tiers modest; security-relevant exports are small.
 4. Bandwidth is negligible at browsing volumes; re-check if usage patterns change (bulk
    downloads, media-heavy research).
 5. Not included: Wazuh/SigNoz hosting (existing org services), Intune/Entra licensing
-   (existing), penetration-testing engagement (one-off, Phase 4).
+   (existing), Proxmox capacity and operations (§3), penetration-testing engagement (one-off,
+   Phase 4).
 
-## 5. Cost controls
+## 6. Cost controls
 
 Budgets + alerts per resource group; auto-shutdown schedules in dev; tagging standard
 (`mina:env`, `mina:plane`, `mina:region`) enforced via Terraform; monthly cost review in
-operations cadence.
+operations cadence, covering the FIAU-side lines in §3 once priced.

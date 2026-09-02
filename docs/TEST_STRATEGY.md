@@ -11,7 +11,7 @@ retained per release (AC-019). No test may be satisfied by hard-coded behaviour.
 | Integration | `tests/integration/` | xUnit + Testcontainers (SQL, Envoy), WireMock for Entra | API against real SQL; Envoy config + mTLS acceptance against issued certs; node sidecar sync; telemetry scrubber |
 | Security | `tests/security/` | mixed (below) | Leak, authz-boundary, open-proxy, reachability, tamper suites |
 | End-to-end | `tests/e2e/` | Windows lab VM + .NET/PowerShell harness driving the real agent + Edge; canary services | Full analyst journeys incl. failure injection |
-| Infra | CI stage | `terraform validate/plan`, tfsec/checkov, Trivy on images | IaC hygiene + policy-as-code (e.g. "no NSG allows RFC1918 outbound from egress") |
+| Infra | CI stage | `terraform validate/plan`, tfsec/checkov, Trivy on images | IaC hygiene + policy-as-code (e.g. "no NSG allows RFC1918 outbound from egress"); rendered cloud-init for the on-premises hosts parsed as valid cloud-config, with the proxy's nginx asserted to carry no management-port server block (M6-2) |
 | Supply chain | CI stage | SBOM (CycloneDX), NuGet/container scanning, lockfile enforcement, signing verification | SR-012, threat N7 |
 
 ## 2. Canary infrastructure (built once in Phase 1, reused forever)
@@ -24,7 +24,9 @@ retained per release (AC-019). No test may be satisfied by hard-coded behaviour.
 - **WebRTC harness page**: gathers ICE candidates, reports what an adversary site would learn
   (AC-007).
 - **External scan host** (outside Azure tenant): open-proxy scans of every ingress IP
-  (CONNECT without cert, TLS without client cert, common proxy fingerprints) — AC-016.
+  (CONNECT without cert, TLS without client cert, common proxy fingerprints) — AC-016. Since
+  ADR-0006 it also scans the **published control-plane endpoint**: only the allowlist and
+  telemetry-ingest routes may answer; portal, audit read and admin routes must 404 (M6-3).
 
 ## 3. Security test suites → acceptance mapping
 
@@ -37,15 +39,16 @@ retained per release (AC-019). No test may be satisfied by hard-coded behaviour.
 | Leak: startup/prefetch | packet capture from browser spawn to first proxied request; prefetch/preconnect flags honoured | THREAT N11/N12 |
 | Separation | ordinary Edge + apps → corp IP while session active; research → Azure IP | AC-002/003 |
 | Open proxy | external scans (all regions); unauthenticated CONNECT (covered by `EnvoyClientAuthTests` against a real Envoy, with a meta-test proving the guard detects removal of `require_client_certificate`); expired cert reuse. **Revoked-cert reuse is expected to succeed** until the certificate expires — the node admits on certificate validity alone (D-14) — so the case records the observed window rather than asserting refusal | AC-016 |
-| Corp reachability | probes from egress nodes to RFC1918 + corp public CIDRs + control-plane private ranges — all denied except approved dependencies | AC-017 |
+| Corp reachability | probes from egress nodes to RFC1918 + corp public CIDRs + the control plane's DMZ and corporate ranges — all denied, with no exception set: the published endpoint is reached as a public address (ADR-0006, M6-7) | AC-017 |
+| Listener separation | management, audit and session endpoints requested on the published port → 404 before authentication; node endpoints on the corporate port likewise; headers and proxy rules cannot move a request between listeners (Kestrel-socket tests, six of which fail without the middleware — M6-3) | ADR-0006 constraint 1 |
 | Region authz | select unapproved region via API directly (bypass UI) — refused + audited | AC-008 |
 | Sensitive sessions | activation without approval; self-approval; TTL expiry terminates; node ack mismatch raises critical; suppressed sessions produce no hostname records but full mandatory metadata | AC-010/011/012 |
 | Roles/privileges | authorisation matrix (Analyst/Approver/Admin × every API operation); node managed-identity scope | SR-004/008 |
 | Endpoint tamper | rogue loopback client; IPC malformed/unauthorised messages; WFP rule deletion attempt as user; unmanaged browser launch | SR-006, B1 |
 | Tokens/certs | expired/not-yet-valid/replayed tokens; cert renewal after Entra revocation; revocation latency measured against the lease TTL, which is the target while admission is by certificate validity alone (D-14) | B3/B5 |
 | Telemetry hygiene | scan Wazuh and SigNoz test exports for URL/hostname patterns (must be zero); audit completeness per event catalogue | AC-013/014 |
-| Break glass | drill: emergency sign-in + Azure action in test → high-severity Wazuh events within SLA | AC-015 |
-| IaC rebuild | destroy/recreate test environment from scratch; all suites green | AC-018 |
+| Break glass | drill: emergency sign-in + Azure action in test → high-severity Wazuh events within SLA — the Azure half; the on-premises half has no mechanism to drill yet (M6-8) | AC-015 |
+| IaC rebuild | destroy/recreate the test environment from scratch — the Azure stamp and support resources *and* the Proxmox control plane from `dev-onprem`; all suites green | AC-018 |
 
 ## 4. E2E environment
 
