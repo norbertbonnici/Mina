@@ -82,3 +82,24 @@ variable "audit_immutability_state" {
     error_message = "audit_immutability_state must be 'Unlocked' or 'Locked'."
   }
 }
+
+variable "diagnostics_retention_days" {
+  description = <<-EOT
+    Retention for the diagnostics workspace. These records are evidence about the audit trail —
+    who read an anchor, who tried to delete one, who used the CA key — so they are not ordinary
+    operational logs. The dev default is short; the production figure belongs with the C1/C2
+    decision in LOGGING_AND_PRIVACY §7, which is still awaiting DPO ratification (D-09).
+  EOT
+  type        = number
+  default     = 30
+}
+
+variable "diagnostics_daily_quota_gb" {
+  description = <<-EOT
+    Daily ingestion cap, or null for none. Deliberately null by default: a quota protects the bill
+    by DROPPING data once it is hit, and the data being dropped here would be the record of who
+    touched the audit anchors. Set it only with that trade understood.
+  EOT
+  type        = number
+  default     = null
+}

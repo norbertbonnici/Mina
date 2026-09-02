@@ -8,11 +8,10 @@
 #                              yet (M4-2), so an expiry date would be a scheduled outage of session
 #                              issuance rather than a control. It belongs with the rollover, not
 #                              before it.
-#   AZU-0057 (storage logging) A real gap, raised as M6-11. Reads of and write attempts against the
-#                              audit anchors should themselves be logged. The check looks for the
+#   AZU-0057 (storage logging) Closed by the diagnostic settings below. The check looks for the
 #                              classic queue-service logging block, which does not fit a blob-only
-#                              account, but its intent is right and currently unmet — and where the
-#                              logs should go is a live question now that Wazuh is on premises.
+#                              account, so it still reports — but its intent is met: reads, writes
+#                              and deletes against the anchors now land in Log Analytics.
 #   AZU-0058 (geo-redundancy)  ZRS today. Moving to GRS replicates C1 audit data to the paired
 #                              region, which is a data-residency decision for the owner (D-08
 #                              approved specific regions) and not one this module should take.
@@ -139,4 +138,74 @@ resource "azurerm_storage_container" "audit_exports" {
   name                  = "audit-exports"
   storage_account_id    = azurerm_storage_account.audit.id
   container_access_type = "private"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Diagnostics (M6-11)
+# ---------------------------------------------------------------------------------------------
+#
+# Two resources hold the only things the platform keeps in Azure, and until now neither recorded
+# who touched them. That matters more here than the usual "enable logging" hygiene:
+#
+#   - The Key Vault holds the CA signing key. Every session certificate the platform issues is a
+#     signature by that key, and an attacker who can sign with it can mint a session certificate
+#     for any analyst. AuditEvent is the only place that use is visible; without it, an unexpected
+#     signature leaves no trace anywhere.
+#   - The storage account holds the audit anchors, which exist to make tampering with the chain
+#     detectable. A delete attempt refused by the immutability policy is precisely the signal the
+#     anchoring design is built to produce, and it was being discarded.
+#
+# ARCHITECTURE §11 already required a Log Analytics workspace for "Entra/Azure activity export for
+# break-glass alerting", and COST_MODEL carries it. It survives ADR-0006 because these two
+# resources did.
+
+resource "azurerm_log_analytics_workspace" "cp" {
+  name                = "log-${var.prefix}-cp"
+  resource_group_name = azurerm_resource_group.control.name
+  location            = azurerm_resource_group.control.location
+  sku                 = "PerGB2018"
+  retention_in_days   = var.diagnostics_retention_days
+
+  # Entra authentication only, consistent with the storage account: a workspace key would be a
+  # stored credential.
+  local_authentication_enabled = false
+
+  # These logs are evidence about the audit trail, so the cap that protects the bill must not
+  # silently drop them. Left unset deliberately — see the variable.
+  daily_quota_gb = var.diagnostics_daily_quota_gb
+
+  tags = merge(var.tags, { "mina:plane" = "control", "mina:data-class" = "c1-audit" })
+}
+
+resource "azurerm_monitor_diagnostic_setting" "key_vault" {
+  name                       = "mina-ca-key-audit"
+  target_resource_id         = azurerm_key_vault.cp.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.cp.id
+
+  # Every access to the CA signing key, including the signatures the control plane itself makes.
+  enabled_log {
+    category_group = "audit"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "audit_blobs" {
+  name = "mina-audit-anchor-access"
+
+  # The blob service, not the account: StorageRead/Write/Delete are emitted per service.
+  target_resource_id         = "${azurerm_storage_account.audit.id}/blobServices/default"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.cp.id
+
+  enabled_log {
+    category = "StorageRead"
+  }
+
+  enabled_log {
+    category = "StorageWrite"
+  }
+
+  # The one that matters most. A delete refused by the immutability policy is what an attempt to
+  # remove tamper evidence looks like from the outside.
+  enabled_log {
+    category = "StorageDelete"
+  }
 }

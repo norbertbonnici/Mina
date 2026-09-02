@@ -17,3 +17,8 @@ output "audit_immutability_state" {
   description = "Whether the anchors are actually immutable. 'Unlocked' means they are not."
   value       = var.audit_immutability_state
 }
+
+output "diagnostics_workspace_id" {
+  description = "Log Analytics workspace carrying CA key use and audit-anchor access."
+  value       = azurerm_log_analytics_workspace.cp.id
+}

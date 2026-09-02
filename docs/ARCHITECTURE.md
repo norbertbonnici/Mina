@@ -313,18 +313,24 @@ suppression markers, aggregate counters, and the mandatory metadata set (ADR-000
 Environments `dev`, `test`, `prod` as separate Terraform states (and ideally subscriptions);
 naming `rg-mina-<plane>-<env>[-<region>]`.
 
-**Control plane (per env):**
+**Control plane — on premises (per env), FIAU Proxmox cluster (ADR-0006):**
 
 | Resource | Notes |
 |---|---|
-| Resource group `rg-mina-core-<env>` | |
-| App Service plan (Linux P1v3; dev: B-series) + 2 apps (API, UI) | VNet-integrated; managed identities |
-| Azure SQL Database (GP serverless; prod: provisioned GP) | Private endpoint; TDE; audit + telemetry schemas |
-| Key Vault (RBAC, purge protection) | Internal CA key (non-exportable), certs, integration secrets |
-| VNet + subnets (app-integration, private-endpoints, relay) | No peering to corp |
-| Storage account (immutable/WORM container) | Periodic signed audit export for tamper evidence |
-| Log Analytics workspace | Platform diagnostics; Entra/Azure activity export for break-glass alerting |
-| Telemetry relay (small VM or Container App) | Wazuh/SigNoz forwarding per D-05 |
+| DMZ VLAN | Dedicated segment, firewalled from the corporate LAN |
+| Publishing reverse proxy VM | Publishes the node-facing listener only; no server block exists for the management port |
+| Application VM (API + portal) | Two listeners on separate ports; host firewall admits the node port from the proxy only, the management port from corporate ranges only |
+| SQL Server VM (Azure Arc-enabled) | Sessions, approvals, audit and telemetry schemas. Arc is what keeps Entra authentication with no stored credential (D-17) |
+| Telemetry relay | Co-located with Wazuh and SigNoz, so delivery is a local hop; the Check Point tunnel is not used |
+
+**Control plane — what remains in Azure (per env):**
+
+| Resource | Notes |
+|---|---|
+| Resource group `rg-mina-<env>-cp` | |
+| Key Vault (RBAC, purge protection) | Internal CA key (non-exportable). Premium/HSM in production; reached outbound from the Arc-enabled hosts |
+| Storage account (immutable/WORM container) | Periodic signed audit export for tamper evidence. Locked immutability in production — Unlocked anchors nothing |
+| Log Analytics workspace | CA key use (Key Vault AuditEvent) and audit-anchor access (StorageRead/Write/Delete); Entra/Azure activity export for break-glass alerting |
 
 **Egress stamp (per approved region, per env):**
 
