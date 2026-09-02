@@ -33,6 +33,21 @@ public static class TrayPipeSecurity
     /// the pipe is for. Network access is impossible by construction — a named pipe reached over
     /// SMB authenticates as NETWORK, which appears nowhere below.
     /// </para>
+    /// <para>
+    /// <b>No explicit owner.</b> This used to call <c>SetOwner(system)</c>, which is redundant with
+    /// how the agent actually runs and actively wrong everywhere else: Windows sets a new object's
+    /// owner to its creating process's own identity by default, so an agent running as SYSTEM (the
+    /// service account this pipe is for) already gets SYSTEM as owner without being told to. Explicitly
+    /// assigning an owner other than the caller's own identity requires a privilege
+    /// (<c>SeRestorePrivilege</c>) that an ordinary process — including every non-service test host,
+    /// and the account GitHub's Windows runners execute as — does not hold, so the explicit call threw
+    /// <c>ERROR_INVALID_OWNER</c> (0x51B) on every single pipe creation outside the real service
+    /// context. That is not a theoretical risk: it is what actually made every named-pipe test in this
+    /// assembly fail on real Windows CI, confirmed by a diagnostic pass that isolated exactly this line
+    /// (removed here) against the identical access rules (kept). Ownership governs who may later edit
+    /// the security descriptor, not who may read or write the pipe — the actual boundary is the access
+    /// rules below, which this change does not touch.
+    /// </para>
     /// </remarks>
     public static PipeSecurity Create()
     {
@@ -40,7 +55,6 @@ public static class TrayPipeSecurity
         var interactive = new SecurityIdentifier(WellKnownSidType.InteractiveSid, domainSid: null);
 
         var security = new PipeSecurity();
-        security.SetOwner(system);
         security.AddAccessRule(new PipeAccessRule(system, PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(
             interactive,
