@@ -1,0 +1,6 @@
+# Copy to backend.hcl (git-ignored). Same state storage as the Azure environments, different key.
+resource_group_name  = "rg-mina-tfstate"
+storage_account_name = "stminatfstate<uniq>"
+container_name       = "tfstate"
+key                  = "dev-onprem.terraform.tfstate"
+use_azuread_auth     = true

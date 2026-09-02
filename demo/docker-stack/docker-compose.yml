@@ -1,0 +1,92 @@
+# Mina interactive Docker stack — DEVELOPMENT/TESTING ONLY, not a deployable artefact.
+#
+# The real, pinned Envoy release running the exact committed egress-node/envoy/envoy-bootstrap.yaml
+# (bind-mounted unmodified), talking over the real gRPC ext_authz admission path (M4-11, D-19) to
+# the real egress-node sidecar built from source. The control plane is a stub — see
+# Mina.Demo.NodeApiStub's own header for why: the real control-plane API validates genuine Entra
+# bearer tokens and has no bypass in it, so it cannot be reached over a network without a tenant.
+#
+# Run: demo/docker-stack/up.sh
+name: mina-node-stack
+
+services:
+  node-api:
+    build:
+      context: ../..
+      dockerfile: demo/docker-stack/Dockerfile.node-api-stub
+    ports:
+      - "8090:8080" # admin API + the sessions/telemetry endpoints the sidecar calls
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 2s
+      retries: 10
+
+  sidecar:
+    build:
+      context: ../..
+      dockerfile: demo/docker-stack/Dockerfile.sidecar
+    depends_on:
+      node-api:
+        condition: service_healthy
+    environment:
+      Mina__Sidecar__Region: westeurope
+      Mina__Sidecar__ControlPlaneBaseAddress: http://node-api:8080
+      Mina__Sidecar__AccessLogPath: /var/log/mina/envoy-access.log
+      Mina__Sidecar__AuthzSocketPath: /run/mina-sidecar/authz.sock
+      # Faster than the production default (15s) so revocation is visible in a demo timescale
+      # without a long wait; still exercises the exact same code path.
+      Mina__Sidecar__AllowlistRefreshInterval: "00:00:05"
+      Mina__Sidecar__AdmissionMaxViewAge: "00:00:20"
+      # Not validated by the stub. A real deployment gets this from a systemd LoadCredential
+      # (cloud-init.yaml.tftpl); see BACKLOG M4-29 for why that isn't wired to a real identity yet.
+      Mina__Sidecar__AccessToken: dev-stub-token
+    volumes:
+      - access-log:/var/log/mina:ro
+      - authz-socket:/run/mina-sidecar
+    healthcheck:
+      # The admission socket is HTTP/2-only (Kestrel is configured that way to match Envoy's
+      # ext_authz cluster, which speaks nothing else to it) — curl needs telling, or it tries
+      # HTTP/1.1 and gets refused.
+      test: ["CMD", "curl", "-f", "--http2-prior-knowledge", "--unix-socket", "/run/mina-sidecar/authz.sock", "http://localhost/healthz"]
+      interval: 2s
+      retries: 10
+
+  # One-shot: the named volume for Envoy's admin socket is created root:root by Docker, but Envoy
+  # runs as uid 101 in the stock image and creates that socket itself (there is no systemd here to
+  # pre-create and chown a RuntimeDirectory= the way cloud-init does on the real node). Fixes the
+  # ownership once, then exits.
+  envoy-init:
+    image: busybox
+    command: ["chown", "101:101", "/run/mina", "/var/log/mina"]
+    volumes:
+      - admin-socket:/run/mina
+      - access-log:/var/log/mina
+
+  envoy:
+    image: envoyproxy/envoy:v1.39.1
+    depends_on:
+      envoy-init:
+        condition: service_completed_successfully
+      sidecar:
+        condition: service_started # order only — envoy must come up even if the sidecar does not, to prove fail-closed
+    command:
+      - "-c"
+      - "/etc/mina/envoy/envoy-bootstrap.yaml"
+      - "--log-level"
+      - "info"
+    volumes:
+      - ../../egress-node/envoy/envoy-bootstrap.yaml:/etc/mina/envoy/envoy-bootstrap.yaml:ro
+      - ./certs:/etc/mina/tls:ro
+      - access-log:/var/log/mina
+      - authz-socket:/run/mina-sidecar
+      # The admin Unix socket's directory. Production gets this from systemd's RuntimeDirectory=;
+      # nothing else needs to reach it, so an unshared volume is enough.
+      - admin-socket:/run/mina
+    ports:
+      - "8443:8443" # tunnel ingress (mTLS + CONNECT)
+      - "8081:8081" # health listener — 200 only while admission is healthy (M4-11)
+
+volumes:
+  access-log:
+  authz-socket:
+  admin-socket:

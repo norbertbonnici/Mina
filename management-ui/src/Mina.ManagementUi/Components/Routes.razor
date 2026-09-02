@@ -1,0 +1,22 @@
+@using Microsoft.AspNetCore.Components.Authorization
+
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)">
+            <NotAuthorized>
+                <MainLayout>
+                    <h1>Not authorised</h1>
+                    <p>
+                        Your account does not hold the role this page requires. Roles are assigned in
+                        Microsoft Entra ID; ask a platform administrator if you believe this is wrong.
+                    </p>
+                </MainLayout>
+            </NotAuthorized>
+        </AuthorizeRouteView>
+    </Found>
+    <NotFound>
+        <MainLayout>
+            <h1>Not found</h1>
+        </MainLayout>
+    </NotFound>
+</Router>

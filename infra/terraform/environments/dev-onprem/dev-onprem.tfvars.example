@@ -1,0 +1,36 @@
+# Copy to dev-onprem.auto.tfvars (git-ignored) and fill in. Every value here is a fact about your
+# Proxmox cluster and network; none has a default, because a wrong guess would either fail late or
+# succeed against the wrong network.
+
+# --- Proxmox placement --------------------------------------------------------------------
+proxmox_node = "pve01"
+datastore_id = "local-lvm"
+
+# Must have the "snippets" content type enabled (Datacenter > Storage > Edit > Content).
+# It is off by default and is the usual first-run failure.
+snippet_datastore_id = "local"
+
+# --- DMZ network (ADR-0006 constraint 2) ----------------------------------------------------
+dmz_bridge  = "vmbr1"
+dmz_vlan_id = 30
+dmz_gateway = "10.20.30.1"
+dns_servers = ["10.10.0.53"]
+
+proxy_address = "10.20.30.10/24"
+app_address   = "10.20.30.11/24"
+sql_address   = "10.20.30.12/24"
+
+# Corporate ranges allowed to reach the management listener and to SSH to these hosts. Everything
+# else in the DMZ, and everything on the internet, is dropped.
+corp_management_cidrs = ["10.10.0.0/16"]
+
+# Public DNS name the Azure egress nodes reach. Point it at proxy_address' public NAT.
+public_hostname = "mina-cp.fiau.mt"
+
+ssh_public_keys = ["ssh-ed25519 AAAA... mina-admin"]
+
+# --- Base image ------------------------------------------------------------------------------
+# A dated release, not "current": AC-018 applies to the on-premises plane too since ADR-0006.
+# Get the digest from the SHA256SUMS file in the same release directory.
+cloud_image_url    = "https://cloud-images.ubuntu.com/releases/24.04/release-20250801/ubuntu-24.04-server-cloudimg-amd64.img"
+cloud_image_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"

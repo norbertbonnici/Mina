@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is here for one type: NotifyIcon, the only in-box way to own a notification-area
+         icon. Taking a third-party tray package instead would add a supply-chain dependency to a
+         signed endpoint component for no capability we do not already have. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Mina.EndpointAgent.Tray</RootNamespace>
+    <AssemblyName>Mina.Tray</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Runs as the interactive user, never elevated. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms is here for NotifyIcon alone. Its implicit usings would put System.Drawing and
+         System.Windows.Forms in every file, where Application, Brush and Color collide with their
+         WPF namesakes; the one file that needs them imports them itself. -->
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mina.EndpointAgent.Ipc\Mina.EndpointAgent.Ipc.csproj" />
+    <ProjectReference Include="..\Mina.EndpointAgent.Tray.Core\Mina.EndpointAgent.Tray.Core.csproj" />
+  </ItemGroup>
+
+</Project>

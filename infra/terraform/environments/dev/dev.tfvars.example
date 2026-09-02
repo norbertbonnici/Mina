@@ -1,0 +1,40 @@
+# Copy to dev.auto.tfvars (git-ignored) and fill in. See docs/PHASE0_DECISIONS.md
+# "Inputs needed to run the PoC".
+
+# --- Azure identity -----------------------------------------------------------------------
+# Entra tenant that owns the control-plane Key Vault. The subscription is supplied by the
+# environment (ARM_SUBSCRIPTION_ID or `az account set`), not by this file.
+tenant_id = "00000000-0000-0000-0000-000000000000"
+
+# --- Egress stamp -------------------------------------------------------------------------
+# D-07 interim: who may reach the dev tunnel ingress (admin workstation / corp egress IPs).
+ingress_allowed_cidrs = ["203.0.113.10/32"]
+
+# AC-017: organisation public ranges egress nodes must never reach.
+corp_public_cidrs = []
+
+admin_ssh_public_key = "ssh-ed25519 AAAA... mina-dev-admin"
+
+# Exact image version — never "latest", or the same apply produces different nodes (AC-018). List
+# what is available with:
+#   az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all -o table
+node_image_version = "24.04.202508190"
+
+# --- Control plane (on premises since ADR-0006) -------------------------------------------
+# Public source addresses the Proxmox-hosted control plane reaches Azure from — the FIAU DMZ's
+# egress addresses. The Key Vault and the audit storage account deny by default and admit only
+# these. Get this wrong and the control plane cannot sign certificates or write audit anchors;
+# leave it open and anyone can try.
+control_plane_egress_cidrs = ["203.0.113.20/32"]
+
+# --- Diagnostics ---------------------------------------------------------------------------
+# Export the subscription Activity Log to the diagnostics workspace. This is what records someone
+# deleting the audit storage account or removing its immutability policy — data-plane logging does
+# not. Needs subscription-level rights. Leave false if the organisation already exports centrally
+# to a workspace outside this subscription, which is better: it does not share a blast radius with
+# what it watches.
+export_activity_log = false
+
+# Who hears about it when anything touches the CA vault or the audit anchors, including a delete
+# refused by the immutability policy. Empty creates no alert rules at all.
+alert_email_receivers = ["soc@fiaumalta.org"]

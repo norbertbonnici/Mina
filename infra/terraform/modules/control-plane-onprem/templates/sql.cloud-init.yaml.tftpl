@@ -1,0 +1,49 @@
+#cloud-config
+# Mina control plane — SQL Server host (ADR-0006, D-17).
+#
+# Co-located in the DMZ segment with the application, and reachable only from it. The database holds
+# session records, approval records, hostname telemetry and the audit chain, which is the reason the
+# whole control plane moved on premises; it should be the least reachable host in the segment.
+
+package_update: true
+packages:
+  - nftables
+
+users:
+  - default
+  - name: mina-admin
+    groups: [sudo]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+%{ for key in ssh_keys ~}
+      - ${key}
+%{ endfor ~}
+
+write_files:
+  - path: /etc/nftables.conf
+    permissions: "0644"
+    content: |
+      #!/usr/sbin/nft -f
+      flush ruleset
+      table inet filter {
+        chain input {
+          type filter hook input priority 0; policy drop;
+          ct state established,related accept
+          iif lo accept
+          # Only the application host may speak to the database.
+          ip saddr ${app_ip} tcp dport 1433 accept
+%{ for cidr in corp_cidrs ~}
+          ip saddr ${cidr} tcp dport 22 accept
+%{ endfor ~}
+        }
+        chain forward { type filter hook forward priority 0; policy drop; }
+      }
+
+runcmd:
+  - [ systemctl, enable, --now, nftables ]
+
+# SQL Server installation and Azure Arc onboarding are M4-18. Arc is what makes
+# "Authentication=Active Directory Default" work from here, and that is the single mechanism
+# keeping SR-005 ("no stored credentials") true for the database -- so it needs verifying against a
+# real Arc-onboarded host, not assuming.

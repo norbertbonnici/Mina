@@ -1,0 +1,121 @@
+@page "/approvals"
+@using Microsoft.AspNetCore.Authorization
+@using Mina.ControlPlane.Application.SensitiveSessions
+@using Mina.ControlPlane.Application.Sessions
+@attribute [Authorize(Policy = UiPolicies.Approver)]
+@inject SensitiveSessionService Requests
+@inject AuthenticationStateProvider AuthState
+
+<h1>Approvals</h1>
+<p class="lede">
+    Requests to suppress URL telemetry for a research session. Approving grants a time-bound window;
+    when it expires the session is terminated rather than quietly resuming logging.
+</p>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="banner">@Error</div>
+}
+else if (!string.IsNullOrEmpty(Done))
+{
+    <div class="notice">@Done</div>
+}
+
+@if (_truncated || _offset > 0)
+{
+    <div class="banner">
+        Showing requests from position @(_offset + 1), oldest first.
+        @if (_offset > 0)
+        {
+            <a href="/approvals?offset=@(Math.Max(0, _offset - PageSize))">Previous</a>
+        }
+        @if (_truncated)
+        {
+            <a href="/approvals?offset=@(_offset + PageSize)">Next</a>
+        }
+    </div>
+}
+
+@if (_pending is null)
+{
+    <div class="empty">Loading…</div>
+}
+else if (_pending.Count == 0)
+{
+    <div class="empty">No requests are waiting for a decision.</div>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Requested</th>
+                <th>Analyst</th>
+                <th>Justification ref.</th>
+                <th>Asked for</th>
+                <th>Session</th>
+                <th>Decision</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var request in _pending)
+            {
+                <tr>
+                    <td>@request.RequestedAt.ToLocalTime().ToString("dd MMM HH:mm")</td>
+                    <td>@request.RequesterUpn</td>
+                    <td>@request.JustificationReference</td>
+                    <td>@((int)request.RequestedDuration.TotalMinutes) min</td>
+                    <td><code>@request.SessionId.ToString()[..8]</code></td>
+                    <td>
+                        <form class="inline" method="post" action="/approvals/approve">
+                            <AntiforgeryToken />
+                            <input type="hidden" name="requestId" value="@request.RequestId" />
+                            <input type="number" name="ttlMinutes" min="1" max="@MaxMinutes"
+                                   value="@((int)request.RequestedDuration.TotalMinutes)" aria-label="Minutes" />
+                            <button class="approve" type="submit">Approve</button>
+                        </form>
+                        <form class="inline" method="post" action="/approvals/deny">
+                            <AntiforgeryToken />
+                            <input type="hidden" name="requestId" value="@request.RequestId" />
+                            <button class="deny" type="submit">Deny</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <p class="muted" style="margin-top:1rem">
+        You cannot decide a request you raised yourself, even holding this role — the control plane
+        refuses it.
+    </p>
+}
+
+@code {
+    private const int MaxMinutes = 240;
+
+    // Mirrors Mina:SensitiveSession:ApproverQueuePageSize. Only the link arithmetic uses it; the
+    // server decides how many rows come back, so a mismatch shifts the links, never the data.
+    private const int PageSize = 100;
+
+    private IReadOnlyList<SensitiveSessionView>? _pending;
+    private bool _truncated;
+    private int _offset;
+
+    [SupplyParameterFromQuery(Name = "offset")]
+    private int? Offset { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "done")]
+    private string? Done { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        _offset = Math.Max(0, Offset ?? 0);
+        var queue = await Requests.ListPendingAsync(user.ToSessionPrincipal(), CancellationToken.None, _offset);
+        _pending = queue.Requests;
+        _truncated = queue.HasMore;
+    }
+}

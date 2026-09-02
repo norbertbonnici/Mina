@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Mina.EndpointAgent</RootNamespace>
+    <!-- Runs as the Windows service "MinaEndpointAgent" in production (Authenticode-signed,
+         Intune-deployed). The project stays buildable cross-platform for CI. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\integrations\signoz\src\Mina.Observability\Mina.Observability.csproj" />
+    <ProjectReference Include="..\Mina.EndpointAgent.Ipc\Mina.EndpointAgent.Ipc.csproj" />
+  </ItemGroup>
+
+</Project>

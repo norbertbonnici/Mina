@@ -1,0 +1,60 @@
+<Solution>
+  <Folder Name="/control-plane/" />
+  <Folder Name="/control-plane/src/">
+    <Project Path="control-plane/src/Mina.ControlPlane.Api/Mina.ControlPlane.Api.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Application/Mina.ControlPlane.Application.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Domain/Mina.ControlPlane.Domain.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Hosting/Mina.ControlPlane.Hosting.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Persistence/Mina.ControlPlane.Persistence.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.Pki/Mina.ControlPlane.Pki.csproj" />
+  </Folder>
+  <Folder Name="/demo/">
+    <Project Path="demo/Mina.Demo/Mina.Demo.csproj" />
+  </Folder>
+  <Folder Name="/egress-node/" />
+  <Folder Name="/egress-node/src/">
+    <Project Path="egress-node/src/Mina.EgressNode.Sidecar/Mina.EgressNode.Sidecar.csproj" />
+  </Folder>
+  <Folder Name="/endpoint-agent/" />
+  <Folder Name="/endpoint-agent/src/">
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent/Mina.EndpointAgent.csproj" />
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent.Ipc/Mina.EndpointAgent.Ipc.csproj" />
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent.Tray/Mina.EndpointAgent.Tray.csproj" />
+    <Project Path="endpoint-agent/src/Mina.EndpointAgent.Tray.Core/Mina.EndpointAgent.Tray.Core.csproj" />
+  </Folder>
+  <Folder Name="/integrations/" />
+  <Folder Name="/integrations/signoz/" />
+  <Folder Name="/integrations/signoz/src/">
+    <Project Path="integrations/signoz/src/Mina.Observability/Mina.Observability.csproj" />
+  </Folder>
+  <Folder Name="/management-ui/" />
+  <Folder Name="/management-ui/src/">
+    <Project Path="management-ui/src/Mina.ManagementUi/Mina.ManagementUi.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/e2e/">
+    <Project Path="tests/e2e/Mina.Agent.E2E.Tests/Mina.Agent.E2E.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/integration/">
+    <Project Path="tests/integration/Mina.ControlPlane.Api.Tests/Mina.ControlPlane.Api.Tests.csproj" />
+    <Project Path="tests/integration/Mina.ControlPlane.Persistence.Tests/Mina.ControlPlane.Persistence.Tests.csproj" />
+    <Project Path="tests/integration/Mina.ManagementUi.Tests/Mina.ManagementUi.Tests.csproj" />
+    <Project Path="tests/integration/Mina.Transport.Tests/Mina.Transport.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/security/" />
+  <Folder Name="/tests/security/canaries/">
+    <Project Path="tests/security/canaries/Mina.Canary.DnsLog/Mina.Canary.DnsLog.csproj" />
+    <Project Path="tests/security/canaries/Mina.Canary.IpEcho/Mina.Canary.IpEcho.csproj" />
+  </Folder>
+  <Folder Name="/tests/support/">
+    <Project Path="tests/support/Mina.TestSupport/Mina.TestSupport.csproj" />
+  </Folder>
+  <Folder Name="/tests/unit/">
+    <Project Path="tests/unit/Mina.ControlPlane.Application.Tests/Mina.ControlPlane.Application.Tests.csproj" />
+    <Project Path="tests/unit/Mina.ControlPlane.Domain.Tests/Mina.ControlPlane.Domain.Tests.csproj" />
+    <Project Path="tests/unit/Mina.ControlPlane.Pki.Tests/Mina.ControlPlane.Pki.Tests.csproj" />
+    <Project Path="tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj" />
+    <Project Path="tests/unit/Mina.EgressNode.Sidecar.Tests/Mina.EgressNode.Sidecar.Tests.csproj" />
+    <Project Path="tests/unit/Mina.Observability.Tests/Mina.Observability.Tests.csproj" />
+  </Folder>
+</Solution>

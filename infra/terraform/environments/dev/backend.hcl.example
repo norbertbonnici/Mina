@@ -1,0 +1,7 @@
+# Copy to backend.hcl (git-ignored) and fill in after running scripts/bootstrap-tfstate.sh.
+# Then: terraform init -backend-config=backend.hcl
+resource_group_name  = "rg-mina-tfstate"
+storage_account_name = "stminatfstate<uniq>"
+container_name       = "tfstate"
+key                  = "dev.terraform.tfstate"
+use_azuread_auth     = true
