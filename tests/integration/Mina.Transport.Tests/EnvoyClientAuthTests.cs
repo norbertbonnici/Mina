@@ -45,12 +45,16 @@ public sealed class EnvoyClientAuthTests
         Skip.If(envoyPath is null, "Set MINA_ENVOY to an Envoy binary to run the interop test.");
 
         using var ca = CertificateAuthority.Create("Mina ClientAuth CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
-        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName);
+        var work = Directory.CreateTempSubdirectory("mina-envoy");
+        await using var admission = await SidecarAdmissionHost.StartAsync(EnvoyProcess.AuthzSocketPathFor(work));
+        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName, workingDirectory: work);
 
         // Control leg first. Without it, a refusal would prove only that something is broken —
-        // a wrong port, a bad CA, an Envoy that never started.
+        // a wrong port, a bad CA, an Envoy that never started, a sidecar that admits nothing.
+        var sessionId = Guid.NewGuid();
+        admission.Admit(sessionId);
         using var sessionCert = ca.IssueClientCertificate(
-            "mina-session-clientauth", "mina:session:clientauth", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
+            "mina-session-clientauth", $"mina:session:{sessionId}", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
         Assert.Equal(Outcome.Tunnelled, await ProbeAsync(envoy, ca, sessionCert));
 
         // The scanner: same endpoint, no client certificate.
@@ -71,6 +75,9 @@ public sealed class EnvoyClientAuthTests
         await using var envoy = await EnvoyProcess.StartAsync(
             envoyPath!, ca, ServerName, requireClientCertificate: false);
 
+        // No admission host: with no certificate there is no session to admit, so the answer here
+        // is a 403 from admission rather than a tunnel — which is still an HTTP response, which is
+        // what "Tunnelled" means in this file: the TLS layer let the client through.
         Assert.Equal(Outcome.Tunnelled, await ProbeAsync(envoy, ca, clientCertificate: null));
     }
 

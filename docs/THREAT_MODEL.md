@@ -53,11 +53,15 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 
 ### B3. Endpoint ↔ Azure ingress
 - **S:** stolen client cert reused elsewhere. *Mitigate:* 60-min TTL and renewal requiring a fresh
-  device-bound Entra token; the certificate carries its session id in a SAN URI, which attributes
-  its traffic but is **not checked for admission** — the node has no session allowlist enforcement
-  (D-14), so a stolen certificate works until it expires. The TTL is therefore the whole of this
-  mitigation, not a backstop to it. *Test:* token/cert expiry tests; a revocation-latency test must
-  measure against the lease TTL (see M4-11 if that is to change).
+  device-bound Entra token, **and** node-side admission (D-19, M4-11): the certificate carries its
+  session id in a SAN URI, which Envoy passes to the sidecar as the verified peer principal, and the
+  sidecar refuses any session the control plane does not currently list. A stolen certificate for a
+  revoked or ended session is refused at the node within one refresh interval (~15 s) rather than
+  working until it expires — the residual is a certificate stolen and reused *before* the session is
+  revoked, which admission cannot distinguish from the legitimate holder, and a tunnel already open
+  at the moment of revocation, which is not re-checked (accepted limitation, D-19). *Test:*
+  token/cert expiry tests; `EnvoySessionAdmissionTests` measures the refusal against the refresh
+  interval and the fail-closed case against the sidecar being unreachable, against a real Envoy.
 - **D (DoS):** ingress flooding. *Mitigate:* 443-only, optional corp-CIDR allowlist, LB/NSG,
   autoscale headroom, alerting. *Test:* load test + alert check.
 
@@ -133,9 +137,9 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 | Analyst disables logging locally | Telemetry originates at egress node, not endpoint; nothing to disable client-side (ADR-0002 Opt 1) |
 | Analyst obtains suppression without approval | Server-side state machine; activation requires APPROVED record, approver ≠ requester (AC-010) |
 | Approval never expires | TTL mandatory; expiry ends the approval always, and terminates the session when suppression was activated (D-06a); scheduler + clock-skew tests (AC-011) |
-| Egress node becomes open proxy | mTLS against the internal CA; no unauthenticated listener; destination deny-list for private/link-local space; external scans (AC-016). The node does **not** check a session allowlist before admitting a tunnel, so a revoked session's certificate works until it expires (≈60 min) — backlog M4-11 |
+| Egress node becomes open proxy | mTLS against the internal CA **and** node-side session admission (D-19, M4-11); no unauthenticated listener; destination deny-list for private/link-local space; external scans (AC-016). A revoked or unknown session's certificate is refused within one refresh interval (~15 s), not the certificate TTL |
 | Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017). Unchanged by ADR-0006, which deliberately declined the tunnel route: the on-premises control plane is reached at a published DMZ endpoint over the public internet, so this stays a blanket denial rather than becoming an allowlist |
-| Entra token stolen | Short session certs renewable only with fresh device-bound tokens. Revocation is refusal to renew, so the exposure window is the lease TTL (≈60 min) — **not** ≤30 s: the node performs no allowlist check before admitting a tunnel (D-14, M4-11) |
+| Entra token stolen | Short session certs renewable only with fresh device-bound tokens; revocation is refusal to renew. Since D-19 (M4-11) the node also refuses to admit *new* tunnels for a revoked session within one refresh interval (~15 s) — the lease TTL (≈60 min) still bounds an already-open tunnel, which admission does not re-check |
 | Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC. Blast radius is unchanged by ADR-0006: the node's reachable set is still the public internet plus one published control-plane endpoint, which is what it was when that endpoint was in Azure. What the endpoint exposes is bounded by the split listeners — the published listener carries only allowlist and telemetry ingest, never the portal or the audit read API |
 | Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence). Since ADR-0006 the store is on FIAU infrastructure and the anchors are in Azure immutable storage, so an on-premises administrator cannot make an alteration unanchored (D-18); anchor access is itself logged (M4-24) |
 | Published control-plane endpoint used to reach the portal, audit API or admin routes | Split listeners enforced by accepting port with default deny; the proxy has no management-port server block; host firewall; 404 before authentication (ADR-0006 constraint 1, M4-16) — see B4 |
@@ -170,6 +174,13 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 5. Control-plane outage pauses new sessions and stops renewals within one lease period
    (availability, not safety). Since ADR-0006 that availability is the FIAU's to provide: one of
    each host today (M4-15), HA and backup/restore in M4-22.
+6. **A tunnel open at the moment of revocation is not closed by admission** (D-19, M4-11): Envoy
+   decides admission per CONNECT and does not re-check an established connection, so a long-lived
+   tunnel — a large download, a websocket, a persistent connection to the destination — opened
+   before a session was revoked keeps carrying traffic until it closes on its own. Accepted rather
+   than capping connection duration, which would trade this off against interrupting exactly the
+   long-running research tasks the platform exists to support; picking a cap is a deliberate
+   availability/security decision left open (BACKLOG M4-11 remaining), not decided by this change.
 
 ## 8. Security testing required
 

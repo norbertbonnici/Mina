@@ -85,3 +85,17 @@ variable "alert_email_receivers" {
   type        = list(string)
   default     = []
 }
+
+variable "control_plane_node_url" {
+  description = <<-EOT
+    The node-facing control-plane endpoint the sidecar calls — the address ADR-0006 publishes from
+    the FIAU DMZ, as an https:// URL. Required with no default (M4-17): since M4-11 the sidecar is
+    what admits every tunnel, so a node that cannot reach this refuses all research browsing.
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^https://", var.control_plane_node_url))
+    error_message = "control_plane_node_url must be an https:// URL."
+  }
+}

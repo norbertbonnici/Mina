@@ -6,9 +6,10 @@ public class AccessLogParserTests
 {
     private const string SessionId = "6f1c2b7e-6c9a-4a3d-9a1e-2b7c4d5e6f70";
 
-    private static string Line(string authority, string? certUri = null, long bytesUp = 100, long bytesDown = 900) =>
+    private static string Line(
+        string authority, string? certUri = null, long bytesUp = 100, long bytesDown = 900, int responseCode = 200) =>
         $$"""
-        {"schema":"mina.hostname.v1","authority":"{{authority}}","bytes_up":{{bytesUp}},"bytes_down":{{bytesDown}},"duration_ms":42,"response_code":200,"client_cert_uri":"{{certUri ?? $"mina:session:{SessionId}"}}"}
+        {"schema":"mina.hostname.v1","authority":"{{authority}}","bytes_up":{{bytesUp}},"bytes_down":{{bytesDown}},"duration_ms":42,"response_code":{{responseCode}},"client_cert_uri":"{{certUri ?? $"mina:session:{SessionId}"}}"}
         """;
 
     [Fact]
@@ -44,6 +45,23 @@ public class AccessLogParserTests
     }
 
     [Theory]
+    [InlineData(403)]   // admission refused: revoked or unknown session
+    [InlineData(503)]   // admission errored: the sidecar was not answering
+    [InlineData(0)]     // no response recorded
+    public void Drops_a_refused_connect_so_it_is_not_recorded_as_a_visit(int responseCode)
+    {
+        // A refused tunnel is not browsing history. Recording it would turn a revoked session's
+        // rejected attempt into a destination the analyst "reached".
+        Assert.Null(AccessLogParser.TryParse(Line("example.org:443", responseCode: responseCode)));
+    }
+
+    [Fact]
+    public void Keeps_a_successful_connect()
+    {
+        Assert.NotNull(AccessLogParser.TryParse(Line("example.org:443", responseCode: 200)));
+    }
+
+    [Theory]
     [InlineData("example.org")]     // no port: not a CONNECT tunnel record
     [InlineData(":443")]            // no host
     [InlineData("example.org:abc")] // unparseable port
@@ -63,12 +81,12 @@ public class AccessLogParserTests
     }
 }
 
-public class SuppressionAllowlistTests
+public class NodeSessionViewTests
 {
     [Fact]
     public void Before_the_first_refresh_every_session_is_treated_as_suppressed()
     {
-        var allowlist = new SuppressionAllowlist();
+        var allowlist = new NodeSessionView();
 
         // Fail safe: withholding a destination is recoverable; recording one that should have been
         // suppressed is not.
@@ -80,13 +98,13 @@ public class SuppressionAllowlistTests
     {
         var normal = Guid.NewGuid();
         var sensitive = Guid.NewGuid();
-        var allowlist = new SuppressionAllowlist();
+        var allowlist = new NodeSessionView();
 
         allowlist.Update(
         [
             new NodeSession(normal, Suppressed: false, DateTimeOffset.UtcNow.AddHours(1)),
             new NodeSession(sensitive, Suppressed: true, DateTimeOffset.UtcNow.AddHours(1)),
-        ]);
+        ], TimeProvider.System);
 
         Assert.False(allowlist.MustWithholdDestination(normal));
         Assert.True(allowlist.MustWithholdDestination(sensitive));
@@ -95,8 +113,8 @@ public class SuppressionAllowlistTests
     [Fact]
     public void A_session_the_node_has_never_heard_of_withholds()
     {
-        var allowlist = new SuppressionAllowlist();
-        allowlist.Update([new NodeSession(Guid.NewGuid(), false, DateTimeOffset.UtcNow.AddHours(1))]);
+        var allowlist = new NodeSessionView();
+        allowlist.Update([new NodeSession(Guid.NewGuid(), false, DateTimeOffset.UtcNow.AddHours(1))], TimeProvider.System);
 
         Assert.True(allowlist.MustWithholdDestination(Guid.NewGuid()));
     }
@@ -105,11 +123,11 @@ public class SuppressionAllowlistTests
     public void A_refresh_removes_sessions_that_have_gone_away()
     {
         var gone = Guid.NewGuid();
-        var allowlist = new SuppressionAllowlist();
-        allowlist.Update([new NodeSession(gone, false, DateTimeOffset.UtcNow.AddHours(1))]);
+        var allowlist = new NodeSessionView();
+        allowlist.Update([new NodeSession(gone, false, DateTimeOffset.UtcNow.AddHours(1))], TimeProvider.System);
         Assert.False(allowlist.MustWithholdDestination(gone));
 
-        allowlist.Update([]);
+        allowlist.Update([], TimeProvider.System);
 
         Assert.True(allowlist.MustWithholdDestination(gone));
         Assert.Equal(0, allowlist.KnownSessions);
@@ -119,11 +137,11 @@ public class SuppressionAllowlistTests
     public void A_session_becoming_suppressed_takes_effect_on_the_next_refresh()
     {
         var session = Guid.NewGuid();
-        var allowlist = new SuppressionAllowlist();
-        allowlist.Update([new NodeSession(session, false, DateTimeOffset.UtcNow.AddHours(1))]);
+        var allowlist = new NodeSessionView();
+        allowlist.Update([new NodeSession(session, false, DateTimeOffset.UtcNow.AddHours(1))], TimeProvider.System);
         Assert.False(allowlist.MustWithholdDestination(session));
 
-        allowlist.Update([new NodeSession(session, true, DateTimeOffset.UtcNow.AddHours(1))]);
+        allowlist.Update([new NodeSession(session, true, DateTimeOffset.UtcNow.AddHours(1))], TimeProvider.System);
 
         Assert.True(allowlist.MustWithholdDestination(session));
     }
@@ -140,8 +158,8 @@ public class TelemetryBatcherTests
     public void An_unsuppressed_session_keeps_its_destination()
     {
         var session = Guid.NewGuid();
-        var allowlist = new SuppressionAllowlist();
-        allowlist.Update([new NodeSession(session, false, T0.AddHours(1))]);
+        var allowlist = new NodeSessionView();
+        allowlist.Update([new NodeSession(session, false, T0.AddHours(1))], new FixedClock(T0));
         var batcher = new TelemetryBatcher(allowlist, new FixedClock(T0));
 
         batcher.Add(Entry(session));
@@ -155,8 +173,8 @@ public class TelemetryBatcherTests
     public void A_suppressed_session_loses_its_destination_before_it_is_queued()
     {
         var session = Guid.NewGuid();
-        var allowlist = new SuppressionAllowlist();
-        allowlist.Update([new NodeSession(session, true, T0.AddHours(1))]);
+        var allowlist = new NodeSessionView();
+        allowlist.Update([new NodeSession(session, true, T0.AddHours(1))], new FixedClock(T0));
         var batcher = new TelemetryBatcher(allowlist, new FixedClock(T0));
 
         batcher.Add(Entry(session));
@@ -173,8 +191,8 @@ public class TelemetryBatcherTests
     public void Draining_empties_the_batcher()
     {
         var session = Guid.NewGuid();
-        var allowlist = new SuppressionAllowlist();
-        allowlist.Update([new NodeSession(session, false, T0.AddHours(1))]);
+        var allowlist = new NodeSessionView();
+        allowlist.Update([new NodeSession(session, false, T0.AddHours(1))], new FixedClock(T0));
         var batcher = new TelemetryBatcher(allowlist, new FixedClock(T0));
 
         batcher.Add(Entry(session));

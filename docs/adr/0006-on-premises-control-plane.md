@@ -100,10 +100,17 @@ public side of the FIAU perimeter is worth publishing an endpoint for.
 
 Session issuance and renewal now depend on the Proxmox cluster and on the published endpoint being
 reachable. Leases are about 60 minutes and renewal requires the control plane, so an outage stops
-research browsing within one lease period. That is the platform failing closed, which is correct,
-but the dependency is new: App Service and Azure SQL provided platform-managed availability and the
-equivalent is now the FIAU's to provide. Backup, restore, patching and cluster HA move to the FIAU
-infrastructure team.
+*new sessions and renewals* within one lease period. That is the platform failing closed, which is
+correct, but the dependency is new: App Service and Azure SQL provided platform-managed availability
+and the equivalent is now the FIAU's to provide. Backup, restore, patching and cluster HA move to
+the FIAU infrastructure team.
+
+Since D-19 (2026-09-02, backlog M4-11), *admission of new tunnels* at the node fails closed sooner
+than that: a node whose sidecar cannot reach the published endpoint stops admitting new tunnels once
+its session view exceeds `AdmissionMaxViewAge` (5 min default), refusing sessions it still lists —
+not only ones the control plane has dropped from it. This does not shorten the lease-bounded horizon
+above for issuance and renewal; it tightens the specific case where the control plane is reachable to
+administrators (who could revoke) but not to a node (which could not learn of it in time).
 
 Note what this does *not* depend on any more: the Check Point tunnel. Mina no longer uses it. Wazuh
 and SigNoz are now a LAN hop from the control plane rather than a tunnel crossing, so ADR-0005's

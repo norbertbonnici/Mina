@@ -35,6 +35,17 @@ variable "ingress_port" {
   default     = 443
 }
 
+variable "health_port" {
+  description = <<-EOT
+    Plaintext port Envoy's health listener answers on. The load balancer probes this rather than
+    the tunnel port: since M4-11 a node admits no tunnel without a healthy sidecar, and a TCP
+    probe on the tunnel port would keep such a node in rotation refusing every session. 200 here
+    means the admission cluster is healthy (envoy-bootstrap.yaml, listener "health").
+  EOT
+  type        = number
+  default     = 8081
+}
+
 variable "backend_port" {
   description = "Port Envoy listens on inside the nodes."
   type        = number

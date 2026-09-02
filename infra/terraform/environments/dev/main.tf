@@ -48,9 +48,11 @@ module "egress_stamp" {
   # The module accepted custom_data all along and nothing ever passed it, which meant the VMSS
   # booted stock Ubuntu with no Mina software on it at all.
   custom_data = templatefile("${path.module}/../../../../egress-node/cloud-init.yaml.tftpl", {
-    envoy_config  = file("${path.module}/../../../../egress-node/envoy/envoy-bootstrap.yaml")
-    envoy_version = var.envoy_version
-    envoy_sha256  = var.envoy_sha256
+    envoy_config      = file("${path.module}/../../../../egress-node/envoy/envoy-bootstrap.yaml")
+    envoy_version     = var.envoy_version
+    envoy_sha256      = var.envoy_sha256
+    sidecar_region    = var.egress_region
+    control_plane_url = var.control_plane_node_url
   })
 }
 

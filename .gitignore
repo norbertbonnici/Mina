@@ -70,3 +70,5 @@ crash.log
 crash.*.log
 backend.hcl
 *.tfvars
+# Linux build output from scripts/test-with-envoy-docker.sh
+.docker-out/

@@ -4,9 +4,9 @@ namespace Mina.EgressNode.Sidecar;
 /// Turns access-log entries into the batch sent upstream, applying the node's local suppression
 /// view: for a suppressed session the destination is dropped here and only the counts survive.
 /// </summary>
-public sealed class TelemetryBatcher(SuppressionAllowlist allowlist, TimeProvider clock)
+public sealed class TelemetryBatcher(NodeSessionView allowlist, TimeProvider clock)
 {
-    private readonly SuppressionAllowlist _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
+    private readonly NodeSessionView _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
     private readonly TimeProvider _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     private readonly List<TelemetryItem> _pending = [];
     private readonly Lock _gate = new();

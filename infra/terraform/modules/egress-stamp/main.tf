@@ -240,11 +240,18 @@ resource "azurerm_lb_backend_address_pool" "nodes" {
   loadbalancer_id = azurerm_lb.ingress.id
 }
 
+# HTTP against Envoy's health listener, not TCP against the tunnel port. A node whose sidecar is
+# down still accepts TCP on the tunnel port — and refuses every tunnel with 503. Probing the
+# health listener, which is 200 only while the admission cluster is healthy, takes such a node out
+# of rotation instead of sending it half the traffic (M4-11).
 resource "azurerm_lb_probe" "envoy" {
-  name            = "envoy-tcp"
-  loadbalancer_id = azurerm_lb.ingress.id
-  protocol        = "Tcp"
-  port            = var.backend_port
+  name                = "envoy-health"
+  loadbalancer_id     = azurerm_lb.ingress.id
+  protocol            = "Http"
+  port                = var.health_port
+  request_path        = "/healthz"
+  interval_in_seconds = 5
+  number_of_probes    = 2
 }
 
 resource "azurerm_lb_rule" "tunnel" {

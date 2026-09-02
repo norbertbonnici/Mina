@@ -30,11 +30,17 @@ public sealed class EnvoyInteropTests
         using var ca = CertificateAuthority.Create("Mina Interop CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
         using var caPublic = ca.PublicCertificate;
 
-        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName);
+        // Since M4-11 Envoy admits nothing the sidecar does not list, so the sidecar's admission
+        // listener runs here too and the session is listed before the tunnel is attempted.
+        var work = Directory.CreateTempSubdirectory("mina-envoy");
+        await using var admission = await SidecarAdmissionHost.StartAsync(EnvoyProcess.AuthzSocketPathFor(work));
+        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName, workingDirectory: work);
         await using var target = new TcpEchoServer();
 
+        var sessionId = Guid.NewGuid();
+        admission.Admit(sessionId);
         using var sessionCert = ca.IssueClientCertificate(
-            "mina-session-interop", "mina:session:interop", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
+            "mina-session-interop", $"mina:session:{sessionId}", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
         var clientPfx = sessionCert.Export(X509ContentType.Pkcs12);
 
         var factory = new MtlsTunnelConnectionFactory(
@@ -70,10 +76,18 @@ public sealed class EnvoyInteropTests
 
         using var ca = CertificateAuthority.Create("Mina Interop CA", Now.AddMinutes(-5), TimeSpan.FromDays(1));
         using var caPublic = ca.PublicCertificate;
-        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName);
 
+        // The session is admitted, deliberately: the refusal under test must come from the
+        // destination policy, and with the session unknown to the sidecar it would come from
+        // admission first and this test would pass without the RBAC filter existing at all.
+        var work = Directory.CreateTempSubdirectory("mina-envoy");
+        await using var admission = await SidecarAdmissionHost.StartAsync(EnvoyProcess.AuthzSocketPathFor(work));
+        await using var envoy = await EnvoyProcess.StartAsync(envoyPath!, ca, ServerName, workingDirectory: work);
+
+        var sessionId = Guid.NewGuid();
+        admission.Admit(sessionId);
         using var sessionCert = ca.IssueClientCertificate(
-            "mina-session-interop", "mina:session:interop", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
+            "mina-session-interop", $"mina:session:{sessionId}", Now.AddMinutes(-5), TimeSpan.FromMinutes(60));
         var clientPfx = sessionCert.Export(X509ContentType.Pkcs12);
 
         var factory = new MtlsTunnelConnectionFactory(
@@ -98,9 +112,11 @@ public sealed class EnvoyInteropTests
         var status = await HttpConnect.ReadResponseStatusAsync(stream, CancellationToken.None);
         Assert.Equal(502, status);
 
-        // The refusal is recorded at the node, so an attempt on IMDS is visible rather than silent.
+        // The refusal is recorded at the node, so an attempt on IMDS is visible rather than silent —
+        // and attributed to the destination policy, not to admission.
         var logged = await WaitForLogLineAsync(envoy.AccessLogPath, $"{host}:{port}");
         Assert.Contains("\"response_code\":403", logged, StringComparison.Ordinal);
+        Assert.Contains("rbac_access_denied", logged, StringComparison.Ordinal);
     }
 
     private static async Task<string> WaitForLogLineAsync(string path, string mustContain)

@@ -87,3 +87,56 @@ directed in a shape that would have routed research egress nodes into corporate 
 reversed it the same day in favour of publishing the control plane's node-facing endpoint from the
 DMZ, so the stop-condition was not exercised and property 4 stands unamended. Recorded because a
 reviewer should be able to see that the condition did its job.
+
+## D-19: node-side session admission (M4-11), superseding D-14
+
+D-14 (2026-09-01) chose to document the certificate TTL (≈60 min) as the revocation bound at the
+node, because at the time Envoy admitted any unexpired certificate chaining to the internal CA with
+no session check. Node-side enforcement was recorded as optional backlog (M4-11).
+
+**D-19 (2026-09-02, project owner: "go ahead with fail closed"): implement it, fail closed.** Envoy
+now consults the node sidecar (`ext_authz`, gRPC over a Unix socket) for every CONNECT and admits
+only a session the control plane currently lists for this region; the sidecar refusing to answer —
+down, unreachable, or its session view too old to trust — refuses every tunnel rather than falling
+back to certificate validity. This reverses D-14's premise and the documents D-14 corrected now need
+correcting again; see ARCHITECTURE §3.3/§4/§5/§11, THREAT_MODEL B3/B4/§5/residual-risk-1, ADR-0006
+Availability, OPERATIONS, TEST_STRATEGY, EVENT_SCHEMAS, egress-node/README.
+
+**The resulting bounds, precisely, because "fail closed" is not by itself a number:**
+- **A new tunnel for a revoked or unknown session** is refused once the node's session view no
+  longer lists it — within one refresh interval (`AllowlistRefreshInterval`, default 15 s), or
+  immediately if the session was never listed (refusal does not wait on a poll).
+- **A new tunnel for a session issued since the node's last refresh** — the cold-start case, where
+  certificate-only admission had no gap and view-based admission would otherwise introduce one — is
+  covered by a refresh-on-miss: an unknown session id triggers one bounded, coalesced refresh before
+  the check answers, so the first tunnel of a session is not routinely refused for up to a poll
+  interval.
+- **An already-open tunnel does not close on revocation.** `ext_authz` decides per CONNECT stream;
+  Envoy does not re-run it on an established connection, and this change does not add a connection
+  duration cap to force one. A long-lived tunnel — a large download, a websocket, a persistent
+  HTTP/2 connection to the destination — opened before revocation keeps carrying traffic until the
+  browser or the destination closes it. **This is a known, accepted gap, not an oversight**: capping
+  connection duration to close that gap trades off against interrupting exactly the kind of
+  long-running research task (a large export, a slow site) the platform exists to support, and
+  picking a cap is a UX/security trade the owner should make deliberately rather than have set as a
+  side effect of this change. Recorded as a residual limitation (THREAT_MODEL) and a follow-up row
+  (BACKLOG M4-11 remaining) rather than decided here.
+- **A control-plane partition in which the control plane is up but nodes cannot reach it** — the
+  case where revocation matters, since a control plane that is genuinely down cannot revoke anything
+  either — degrades new-tunnel admission to refusal after `AdmissionMaxViewAge` (default 5 min,
+  chosen as roughly twenty missed refreshes: long enough that a proxy restart or one rate-limited
+  response on the published endpoint does not take a node's admission out, short enough to bound the
+  partition case meaningfully below the ~60 min this superseded). Past that the node fails closed
+  entirely — refusing sessions it still lists, not only ones it has lost — which is the existing
+  "platform fails closed" property (CLAUDE.md #2), reached sooner than before (was: the lease TTL,
+  ~60 min) rather than differently.
+
+**Node health becomes sidecar health.** A node whose sidecar cannot be reached refuses 100% of
+tunnels (503) while still accepting TCP on the tunnel port, so the load balancer's probe moved from
+TCP-on-8443 to HTTP against a health listener that is 200 only while the admission path is healthy
+(egress-stamp module, `azurerm_lb_probe.envoy`).
+
+**This makes the sidecar load-bearing while it has no production packaging.** cloud-init installs no
+sidecar binary today (BACKLOG M4-27, blocking): until it exists, a node built from this configuration
+refuses all research browsing, which is fail-closed and correctly so, but is the explicit reason
+M4-27 gates any environment beyond local/Docker-validated testing.

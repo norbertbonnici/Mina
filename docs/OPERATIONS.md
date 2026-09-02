@@ -8,9 +8,12 @@
 - Endpoint agent/profile malfunction.
 - Wazuh integration failure.
 - SigNoz integration failure.
-- Published DMZ control-plane endpoint unreachable: nodes cannot pull allowlists or ship
-  telemetry, and analyst sessions stop renewing within one lease period (~60 min). Failing
-  closed is correct; the runbook is about restoring the endpoint and confirming no audit gap.
+- Published DMZ control-plane endpoint unreachable: nodes cannot pull their session view or ship
+  telemetry, and analyst sessions stop renewing within one lease period (~60 min). Since D-19
+  (M4-11), nodes stop admitting *new* tunnels sooner than that — once each node's session view
+  exceeds `AdmissionMaxViewAge` (5 min default) — so research browsing on affected nodes degrades
+  before session renewal itself does. Failing closed is correct at both horizons; the runbook is
+  about restoring the endpoint and confirming no audit gap.
 - Proxmox host or cluster failure, and on-premises SQL Server failure/restore (ADR-0006).
 - Arc agent failure on a control-plane host: breaks Entra authentication to SQL *and* Key Vault
   access, with no stored credential to fall back on by design.

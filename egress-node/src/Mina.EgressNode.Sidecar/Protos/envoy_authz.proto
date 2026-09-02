@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+// A trimmed, wire-compatible subset of Envoy's external authorization API, taken from the pinned
+// release (v1.39.1):
+//   api/envoy/service/auth/v3/external_auth.proto
+//   api/envoy/service/auth/v3/attribute_context.proto
+//   api/envoy/type/v3/http_status.proto
+//   google/rpc/status.proto
+//
+// Only the fields the sidecar reads or writes are declared. Package, service and method names and
+// every field number are Envoy's, which is what makes the messages interchangeable on the wire —
+// protobuf skips fields it does not know — without vendoring the twenty-file import tree the full
+// definitions pull in. Anything added here must be checked against those files, not guessed.
+package envoy.service.auth.v3;
+
+option csharp_namespace = "Mina.EgressNode.Sidecar.Envoy";
+
+service Authorization {
+  rpc Check(CheckRequest) returns (CheckResponse);
+}
+
+message CheckRequest {
+  AttributeContext attributes = 1;
+}
+
+message AttributeContext {
+  message Peer {
+    // Set by Envoy from the verified peer certificate: its first URI SAN, else its first DNS SAN,
+    // else its subject (check_request_utils.cc). For a Mina session certificate that is the
+    // session URI, mina:session:<id>.
+    string principal = 4;
+    string certificate = 5;
+  }
+
+  message HttpRequest {
+    string method = 2;
+    string path = 4;
+    string host = 5;
+  }
+
+  message Request {
+    HttpRequest http = 2;
+  }
+
+  Peer source = 1;
+  Peer destination = 2;
+  Request request = 4;
+}
+
+message CheckResponse {
+  // google.rpc.Status. Code 0 admits; anything else refuses.
+  Status status = 1;
+  oneof http_response {
+    DeniedHttpResponse denied_response = 2;
+    OkHttpResponse ok_response = 3;
+  }
+}
+
+message DeniedHttpResponse {
+  HttpStatus status = 1;
+  string body = 3;
+}
+
+message OkHttpResponse {
+}
+
+message HttpStatus {
+  StatusCode code = 1;
+}
+
+enum StatusCode {
+  Empty = 0;
+  OK = 200;
+  Forbidden = 403;
+  ServiceUnavailable = 503;
+}
+
+// google.rpc.Status, fields 1 and 2.
+message Status {
+  int32 code = 1;
+  string message = 2;
+}

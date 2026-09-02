@@ -175,21 +175,24 @@ missing connection string now refuses the host rather than selecting an in-memor
 - **Public Standard Load Balancer** with one static **ingress** public IP, TCP 443 only.
   Optionally source-restricted to FIAU's corporate egress CIDRs (decision D-07).
 - **Envoy on Linux VMSS** (2+ instances): terminates mTLS (platform internal CA; the client
-  certificate must chain to that CA and be unexpired — Envoy does **not** check a session
-  allowlist, so admission is by certificate validity alone; see the revocation note in §4 and
-  backlog M4-11), terminates HTTP/2, serves CONNECT, applies the destination deny-list for
-  private and link-local space, opens upstream connections, and emits per-connection hostname
-  telemetry. Suppression is applied by the sidecar and the control plane, not by Envoy, which has
-  no per-session policy of any kind.
+  certificate must chain to that CA and be unexpired), then consults the node sidecar over
+  `ext_authz` before admitting the tunnel — a certificate alone is necessary but no longer
+  sufficient; see the revocation note in §4 (D-19, M4-11) — terminates HTTP/2, serves CONNECT,
+  applies the destination deny-list for private and link-local space, opens upstream connections,
+  and emits per-connection hostname telemetry. Suppression is applied by the sidecar and the
+  control plane, not by Envoy, which has no per-session suppression policy of its own.
   Hardened minimal image, rebuilt from IaC/pipeline, no inbound management from the internet
   (Azure-native management path only).
 - **NAT Gateway** with a static public IP prefix (e.g. /30): the **egress** identity analysts
   appear from. Deliberately distinct from the ingress IP.
-- **Node sidecar** (small, may be .NET): pulls session allowlist/suppression flags from the
-  control-plane API every ~30 s using its managed identity — polling only; there is no push
-  channel, and the pull interval bounds how quickly a *suppression* flag reaches the node, not how
-  quickly a session stops being admitted. It ships Envoy telemetry to the control plane/relay and
-  runs the Wazuh agent.
+- **Node sidecar** (.NET): pulls the session view (which sessions this region serves, and which are
+  suppressed) from the control-plane API every ~15 s using its managed identity, and answers Envoy's
+  `ext_authz` admission check over a Unix socket for every CONNECT — a session issued since the last
+  pull is covered by a bounded refresh-on-miss rather than waiting for the next poll. Admission is
+  now load-bearing: since D-19 (2026-09-02, M4-11) a node whose sidecar cannot be reached or whose
+  session view is too old to trust refuses every tunnel, and the load balancer probes the sidecar's
+  health through Envoy rather than TCP on the tunnel port for exactly that reason (§9). It ships
+  Envoy telemetry to the control plane/relay and runs the Wazuh agent.
 - **NSG/route posture**: outbound to Internet allowed; outbound to RFC1918, Azure service tags
   for corp-peered ranges, and the corporate public CIDRs **denied**; no VNet peering, no gateway,
   no UDR toward anything. The control plane is reached at its published public endpoint over TLS
@@ -241,11 +244,16 @@ missing connection string now refuses the host rather than selecting an in-memor
 - **Session lease model**: Entra access tokens are minutes-to-an-hour artefacts; research
   sessions need tighter control. The control plane therefore issues its own **session-bound
   client certificate** (TTL ≈ 60 min, renewable only with a fresh valid Entra token) plus a
-  session record with state. Revocation = stop renewing. The certificate already
-  issued stays valid until its TTL elapses, so the revocation window today is that TTL (≈60 min);
-  the node's allowlist governs suppression, not admission, and pushing a removal to nodes does not
-  currently refuse an established or re-offered certificate. Node-side allowlist enforcement, which
-  would bring revocation down to the push/pull interval, is backlog M4-11. No CAE dependency.
+  session record with state. Revocation = stop renewing **and** the node stops admitting new
+  tunnels for the session as soon as its view no longer lists it (D-19, M4-11): a certificate
+  chaining to the internal CA is necessary to open a tunnel but no longer sufficient, since the
+  node's sidecar (`ext_authz`) refuses any session the control plane does not currently list.
+  This bounds *new* admissions to roughly the sidecar's refresh interval (default 15 s), not the
+  certificate's remaining TTL — a certificate for a session issued since the last refresh is
+  covered by a bounded refresh-on-miss rather than waiting for the next poll. **An already-open
+  tunnel is not affected**: Envoy does not re-run admission on an established connection, so a
+  long-lived tunnel opened before revocation keeps carrying traffic until it closes on its own —
+  see the accepted limitation recorded at D-19. No CAE dependency.
 - No local passwords, no separate credential store, break-glass excepted (§12).
 
 ```mermaid
@@ -263,7 +271,7 @@ sequenceDiagram
     A->>C: POST /sessions {region, CSR} + token
     C->>C: Authorise: role, region approved, device-bound token (+ CA auth context when configured)
     C-->>A: Session ID + client cert (60 min) + egress endpoint
-    X->>C: Pull session allowlist (~30 s, suppression flags only)
+    X->>C: Pull session view (~15 s; admission + suppression, D-19)
     C->>C: Audit: session_started → Wazuh
     A->>X: mTLS HTTP/2 tunnel (client cert)
     A->>A: Open loopback proxy, then spawn research browser
@@ -287,8 +295,8 @@ Fail-closed (FR-007, AC-004) is layered — every failure lands on "no traffic",
 |---|---|
 | Tunnel drops / egress unreachable | Agent closes the loopback listener; browser gets proxy errors; fixed proxy config cannot fall back to DIRECT; agent retries and surfaces state in tray |
 | Agent killed / crashes | Loopback proxy gone ⇒ browser has no path; C2 WFP rules persist independently of the agent process, so even flag-stripped launches stay contained |
-| Session revoked / expired | Control plane stops renewal; the already-issued certificate keeps working until it expires, so the revocation window is the lease TTL (≈60 min), not the allowlist refresh interval. The node's allowlist governs suppression, not admission — Envoy admits any unexpired certificate chaining to the internal CA. Loopback closes when the agent's renewal is refused. Node-side allowlist enforcement is backlog M4-11 |
-| Control plane down | Existing sessions continue until cert expiry (bounded), no new sessions; policy: certificates are short so exposure is capped |
+| Session revoked / expired | Control plane stops renewal, and the node's sidecar stops admitting *new* tunnels for the session once its view no longer lists it — within one refresh interval (~15 s), or immediately for a session that was never listed (D-19, M4-11). A tunnel already open when the session is revoked is not affected: Envoy does not re-run admission on an established connection, so it keeps carrying traffic until it closes on its own (accepted limitation, D-19). Loopback closes when the agent's renewal is refused |
+| Control plane down | Nodes fail closed once their session view exceeds `AdmissionMaxViewAge` (5 min default) — refusing *new* tunnels for sessions they still list, not only ones dropped from it — sooner than the ~60 min this superseded, because admission no longer rests on certificate validity alone (D-19). Existing open tunnels are unaffected by this row for the same reason as above |
 | Research browser launched outside the agent | C2: WFP allows only loopback ⇒ nothing works until a session exists; C1 fallback: detective controls only (ADR-0001) |
 
 ## 6. Leak controls
@@ -301,7 +309,7 @@ Fail-closed (FR-007, AC-004) is layered — every failure lands on "no traffic",
 | WebRTC | Browser IP-handling forced to proxy-only/non-proxied-UDP-disabled for the research instance; C2 WFP blocks its UDP anyway; mDNS ICE obfuscation remains default | WebRTC harness page, AC-007 |
 | QUIC/HTTP3 | Disabled for the research instance (flag/policy); WFP blocks UDP/443 regardless | Network capture during e2e, AC-006/007 |
 | Ordinary apps captured by mistake | Only the research image path has WFP rules; only the research instance has the proxy config; nothing else references the agent | Negative-path test: normal Edge/apps exit via corp IP, AC-002 |
-| Open proxy | Envoy requires platform mTLS (a client certificate chaining to the internal CA); LB exposes 443 only; optional source-CIDR restriction. Note this authenticates the *platform*, not a particular live session — see the revocation row | External open-proxy scan, AC-016; real-Envoy client-authentication test |
+| Open proxy | Envoy requires platform mTLS (a client certificate chaining to the internal CA) **and** the node sidecar admitting the session (D-19, M4-11); LB exposes 443 only; optional source-CIDR restriction | External open-proxy scan, AC-016; real-Envoy client-authentication and session-admission tests |
 | Egress → corp | NSG/route denies RFC1918 + corp CIDRs from egress subnets; no peering to corp | Automated reachability probes from nodes, AC-017 |
 
 ## 7. Session and sensitive-session lifecycle
@@ -388,7 +396,11 @@ backup/restore and the published endpoint's uptime replace what App Service and 
 The on-premises environment is one of each host today (M4-15); running two instances is a design
 question in its own right (ADR-0006, "More than one instance") and the background-service lease is
 backlog M4-23. An outage stops session issuance and renewal within one lease period — the platform
-failing closed — and `docs/OPERATIONS.md` lists the runbooks.
+failing closed — and `docs/OPERATIONS.md` lists the runbooks. Since D-19 (M4-11), node-side
+admission fails closed sooner than that: a node that cannot reach the control plane stops admitting
+*new* tunnels once its session view exceeds `AdmissionMaxViewAge` (5 min default), tightening the
+partition case — a control plane reachable to admins but not to nodes — without changing the
+overall lease-bounded horizon for issuance and renewal.
 
 ## 10. Audit and telemetry
 
@@ -431,6 +443,7 @@ over the tunnel.
 |---|---|
 | Ordinary apps never use research egress | Proxy config + WFP rules exist only for the research browser image/instance |
 | Protected traffic never falls back to ordinary egress | Fixed proxy no-DIRECT; loopback gated on live session; C2 WFP default-block |
+| A revoked or unknown session cannot open a new tunnel | Node-side admission (D-19, M4-11): Envoy consults the sidecar's session view for every CONNECT and refuses anything it does not currently list, bounded by the refresh interval rather than the certificate TTL. Does not close a tunnel already open at the moment of revocation — see the accepted limitation at D-19 |
 | Research egress cannot reach corp/RFC1918 | Egress NSG + route deny; no peering; automated probes (AC-017). ADR-0006 kept this intact by publishing the control plane's node-facing endpoint from the FIAU DMZ rather than routing nodes over the tunnel |
 | Management endpoints authenticated, and never served on the published listener | Entra + Conditional Access on UI/API; the portal, audit read and administrative endpoints bind a corporate-facing listener only, so they are unreachable from the internet even if the DMZ proxy is misconfigured (ADR-0006 constraint 1); nodes authenticate with a per-region app role |
 | No public unauthenticated proxy/forwarder | mTLS-only Envoy listener; 443-only LB; optional source-CIDR allowlist; external scans (AC-016) |

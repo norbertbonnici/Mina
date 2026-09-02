@@ -39,6 +39,17 @@ public static class AccessLogParser
                 return null;
             }
 
+            // A refused CONNECT is not a visit. Since M4-11 a revoked or unknown session's tunnel
+            // is answered 403 by admission, and a sidecar outage 503; recording those as hostname
+            // telemetry would turn attempts that never connected into destinations the analyst
+            // "reached". The refusal is Envoy's access log and the sidecar's denial log; it is not
+            // browsing history. Only a 2xx CONNECT — a tunnel that opened — is shipped.
+            var responseCode = (int)ReadLong(root, "response_code");
+            if (responseCode is < 200 or >= 300)
+            {
+                return null;
+            }
+
             if (!TryReadAuthority(root, out var hostname, out var port)
                 || !TryReadSession(root, out var sessionId))
             {
