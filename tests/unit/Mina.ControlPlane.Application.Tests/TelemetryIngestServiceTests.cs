@@ -274,6 +274,16 @@ public class TelemetryIngestServiceTests
             Guid sessionId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SuppressedTrafficSummary>>(
                 [.. _suppressed.Where(s => s.SessionId == sessionId)]);
+
+        // Ingest never deletes. Throwing rather than returning zero, so a future change that made
+        // this path delete telemetry would fail loudly here instead of passing quietly.
+        public Task<int> DeleteHostnamesBeforeAsync(
+            DateTimeOffset cutoff, int limit, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Ingest does not delete.");
+
+        public Task<int> DeleteSuppressedSummariesBeforeAsync(
+            DateTimeOffset cutoff, int limit, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Ingest does not delete.");
     }
 
     private sealed class RecordingAudit : ITelemetryAuditSink
@@ -283,6 +293,15 @@ public class TelemetryIngestServiceTests
         public List<(Guid SessionId, string Region, int Count)> Unattributable { get; } = [];
 
         public List<(Guid SessionId, string Claimed, string Actual, int Count)> RegionMismatches { get; } = [];
+
+        public List<(DateTimeOffset Cutoff, int Hostnames, int Summaries)> Retentions { get; } = [];
+
+        public Task RetentionAppliedAsync(
+            DateTimeOffset cutoff, int hostnames, int suppressedSummaries, CancellationToken cancellationToken)
+        {
+            Retentions.Add((cutoff, hostnames, suppressedSummaries));
+            return Task.CompletedTask;
+        }
 
         public Task SuppressionMismatchAsync(
             Guid sessionId, string region, int itemCount, CancellationToken cancellationToken)

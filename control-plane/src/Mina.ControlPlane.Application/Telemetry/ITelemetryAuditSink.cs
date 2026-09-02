@@ -24,6 +24,15 @@ public interface ITelemetryAuditSink
     Task RegionMismatchAsync(
         Guid sessionId, string claimedRegion, string sessionRegion, int itemCount,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// C3 retention deleted telemetry (`telemetry_retention_applied`). Routine, so Info — but it is
+    /// in the governance trail rather than only the service log, because deletion is the one action
+    /// here whose evidence deletes itself: without this event, "the hostnames are gone" and "the
+    /// hostnames were never recorded" look identical afterwards.
+    /// </summary>
+    Task RetentionAppliedAsync(
+        DateTimeOffset cutoff, int hostnames, int suppressedSummaries, CancellationToken cancellationToken);
 }
 
 /// <summary>No-op sink for tests that do not assert on audit.</summary>
@@ -39,5 +48,9 @@ public sealed class NullTelemetryAuditSink : ITelemetryAuditSink
 
     public Task RegionMismatchAsync(
         Guid sessionId, string claimedRegion, string sessionRegion, int itemCount,
+        CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task RetentionAppliedAsync(
+        DateTimeOffset cutoff, int hostnames, int suppressedSummaries,
         CancellationToken cancellationToken) => Task.CompletedTask;
 }

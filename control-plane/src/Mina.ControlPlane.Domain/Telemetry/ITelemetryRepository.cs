@@ -16,4 +16,24 @@ public interface ITelemetryRepository
 
     Task<IReadOnlyList<SuppressedTrafficSummary>> ListSuppressedForSessionAsync(
         Guid sessionId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes hostname telemetry recorded before <paramref name="cutoff"/>, returning how many rows
+    /// went. C3 retention (LOGGING_AND_PRIVACY §7).
+    /// </summary>
+    /// <remarks>
+    /// This is the one operation in the platform that destroys analyst data on purpose, so it is
+    /// bounded and its result is reported rather than assumed: the caller records the count in the
+    /// audit trail. Deleting is idempotent, so a second instance running the same sweep removes
+    /// nothing and no coordination is needed.
+    /// </remarks>
+    Task<int> DeleteHostnamesBeforeAsync(DateTimeOffset cutoff, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes suppressed-traffic summaries recorded before <paramref name="cutoff"/>. Same class
+    /// and same window as the hostnames: a summary is what is left of a suppressed session's
+    /// traffic, and keeping it longer than the destinations it replaced would be inconsistent.
+    /// </summary>
+    Task<int> DeleteSuppressedSummariesBeforeAsync(
+        DateTimeOffset cutoff, int limit, CancellationToken cancellationToken);
 }

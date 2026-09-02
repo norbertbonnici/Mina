@@ -91,16 +91,37 @@ ratification:
 | C5 operational telemetry | **90 days** |
 | C6 justification references | with C1 (5 years) |
 
-**These values are decided, not enforced.** Nothing in the platform deletes anything today: there
-is no retention job, no TTL on the telemetry tables, and no lifecycle policy on the audit export
-container. Every class above accumulates indefinitely until M4-9 implements enforcement. Recorded
-plainly because an unenforced retention period reads as a control in an assessment and is not one.
+**C3 is enforced; the rest is not.** M4-9 built the enforcement for hostname telemetry and left
+the other classes alone, deliberately, because enforcement is not symmetrical across them:
 
-Enforcement is not symmetrical across the classes. C3 hostname telemetry and C5 operational
-telemetry are ordinary deletions. C1/C2 governance audit is not: the trail is append-only and
+| Class | Enforced by | State |
+|---|---|---|
+| C3 hostname telemetry | `TelemetryRetentionService`, swept every 6h | **Mechanism exists. Off unless configured** (see below) |
+| C1/C2 governance audit | — | Not enforced; needs its own ADR (below) |
+| C5 operational telemetry | SigNoz retention | SigNoz's own configuration, not this platform's |
+| C6 justification references | with C1 | Not enforced |
+
+**The C3 mechanism ships switched off.** `Mina:Telemetry:Retention:HostnameRetentionDays` has no
+default, and unset means nothing is deleted. That is not an oversight: 180 days is a proposal
+awaiting the ratification this section already requires, and deleting an analyst's browsing record
+one day earlier than the approved period is as much a data-protection failure as keeping it a year
+too long. Setting the value is a deployment decision with a name against it, and the platform logs
+at Warning on every start where it is unset, so "not enforced" is a stated condition rather than an
+absence someone has to notice. **A production deployment without this value set does not meet the
+retention commitment.**
+
+Deletion is itself audited (`telemetry_retention_applied`, EVENT_SCHEMAS §2), recording the cutoff
+and the counts. Deletion is the one action in the platform whose evidence deletes itself: without
+that event, a purged period and a period in which nothing was recorded look the same afterwards.
+
+**C1/C2 governance audit is not enforced and is not scheduled to be.** The trail is append-only and
 hash-chained, and its exports are anchors in write-once storage, so deleting from it has to be
-designed rather than scheduled — an unanchored gap is indistinguishable from tampering. That
-design needs its own ADR and DPO sign-off before any code is written for it.
+designed rather than scheduled — an unanchored gap is indistinguishable from tampering. The same
+reasoning applies to the audit export container: a storage lifecycle policy that expired old
+anchors would be C1 deletion by another route, and the immutability policy on that container is
+there precisely to refuse it. Both need their own ADR and DPO sign-off before any code is written.
+Until then C1/C2 accumulates, which is the safe direction for a 5-year retention class in its first
+year of operation.
 
 Per REQUIREMENTS §5 these require legal/data-protection ratification before production; that
 sign-off remains a production-gate item. No permanent exemptions.

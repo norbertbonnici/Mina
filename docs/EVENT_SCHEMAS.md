@@ -59,6 +59,7 @@ tunnel path is superseded); one event per record; at-least-once with `event_id` 
 | agent_health_degraded | warning | endpoint-agent | subsystem |
 | node_security_event | high | egress-node | wazuh-agent native findings passthrough ref |
 | open_proxy_probe_detected | warning | egress-node | source IP, count (unauthenticated connects) |
+| telemetry_retention_applied | info | control-plane | `data_class` (C3), `cutoff`, `hostnames_deleted`, `suppressed_summaries_deleted`. Written only by passes that actually deleted something. Deletion is the one action whose own evidence disappears, so without this event a purged period and a period that recorded nothing look identical afterwards |
 | audit_export_completed | info | control-plane | export range, hash (WORM anchor) |
 | audit_pipeline_degraded | high | control-plane | backlog size |
 | break_glass_signin | **critical** | platform (Entra export) | account, source |

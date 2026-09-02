@@ -183,4 +183,18 @@ public sealed class PersistentTelemetryAuditSink(AuditWriter writer) : ITelemetr
             Region: region,
             SessionId: sessionId,
             Data: new { discarded_items = itemCount }), cancellationToken);
+
+    public Task RetentionAppliedAsync(
+        DateTimeOffset cutoff, int hostnames, int suppressedSummaries, CancellationToken cancellationToken) =>
+        _writer.WriteAsync(new AuditEventDraft(
+            "telemetry_retention_applied",
+            AuditSeverity.Info,
+            AuditComponent.ControlPlane,
+            Data: new
+            {
+                data_class = "C3",
+                cutoff = cutoff.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                hostnames_deleted = hostnames,
+                suppressed_summaries_deleted = suppressedSummaries,
+            }), cancellationToken);
 }

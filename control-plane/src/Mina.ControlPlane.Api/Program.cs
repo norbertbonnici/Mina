@@ -153,6 +153,16 @@ builder.Services.AddScoped<ITelemetryAuditSink, PersistentTelemetryAuditSink>();
 builder.Services.AddScoped<TelemetryIngestService>();
 builder.Services.AddScoped<NodeDirectoryService>();
 
+// C3 retention (M4-9). Off unless a period is configured: the operating value in
+// LOGGING_AND_PRIVACY is a proposal awaiting DPO ratification, and deleting analyst records on an
+// unratified number is its own failure. The service says which state it is in at startup.
+builder.Services.AddOptions<TelemetryRetentionOptions>()
+    .Bind(builder.Configuration.GetSection(TelemetryRetentionOptions.SectionName))
+    .Validate(o => !o.Validate().Any(), "Invalid Mina:Telemetry:Retention configuration.")
+    .ValidateOnStart();
+builder.Services.AddScoped<TelemetryRetentionService>();
+builder.Services.AddHostedService<TelemetryRetentionBackgroundService>();
+
 // Audit chain: durable, append-only, hash-linked, and periodically anchored to write-once storage.
 builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddScoped<AuditChainVerifier>();

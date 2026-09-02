@@ -41,4 +41,24 @@ public sealed class EfTelemetryRepository(MinaDbContext context) : ITelemetryRep
             .Where(s => s.SessionId == sessionId)
             .OrderByDescending(s => s.IntervalStart)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+    // ExecuteDelete, not load-then-remove: retention runs against a table sized by every destination
+    // every analyst has reached, and materialising a batch only to delete it doubles the work for
+    // rows nobody reads. Oldest first, so a bounded pass always makes progress on the oldest data
+    // rather than deleting an arbitrary slice of what is expired.
+    public Task<int> DeleteHostnamesBeforeAsync(
+        DateTimeOffset cutoff, int limit, CancellationToken cancellationToken) =>
+        _context.Hostnames
+            .Where(o => o.OccurredAt < cutoff)
+            .OrderBy(o => o.OccurredAt)
+            .Take(limit)
+            .ExecuteDeleteAsync(cancellationToken);
+
+    public Task<int> DeleteSuppressedSummariesBeforeAsync(
+        DateTimeOffset cutoff, int limit, CancellationToken cancellationToken) =>
+        _context.SuppressedTraffic
+            .Where(s => s.IntervalStart < cutoff)
+            .OrderBy(s => s.IntervalStart)
+            .Take(limit)
+            .ExecuteDeleteAsync(cancellationToken);
 }
