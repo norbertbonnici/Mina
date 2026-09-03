@@ -96,6 +96,18 @@ variable "public_hostname" {
   type        = string
 }
 
+variable "tunnel_connector_cidr" {
+  description = <<-EOT
+    Address (as a /32, or a range) of the reverse-tunnel connector -- e.g. a Cloudflare Tunnel
+    connector -- that is the only thing allowed to reach the proxy's node-facing listener.
+    Public TLS terminates at that connector's far end, not on this VM (ADR-0006 constraint 3 is
+    still met; the certificate just isn't installed here). If you're terminating TLS on the proxy
+    VM itself instead, this should be the internet at large ("0.0.0.0/0") and the proxy cloud-init
+    template's nginx site needs its own certificate configuration to match.
+  EOT
+  type        = string
+}
+
 variable "node_listener_port" {
   description = "Port the control-plane API binds for the node-facing listener (Mina:Hosting:Listeners:NodePort)."
   type        = number

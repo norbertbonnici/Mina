@@ -32,6 +32,12 @@ corp_management_cidrs = ["10.10.0.0/16"]
 # Public DNS name the Azure egress nodes reach. Point it at proxy_address' public NAT.
 public_hostname = "mina-cp.fiau.mt"
 
+# Address of whatever terminates public TLS in front of the proxy and forwards to it over plain
+# HTTP -- a Cloudflare Tunnel connector, or your own reverse proxy. Only this address may reach
+# the proxy's node-facing port. Use "0.0.0.0/0" if the proxy VM terminates TLS itself instead (and
+# adjust its nginx site + install a certificate there to match).
+tunnel_connector_cidr = "10.20.30.50/32"
+
 ssh_public_keys = ["ssh-ed25519 AAAA... mina-admin"]
 
 # --- Base image ------------------------------------------------------------------------------

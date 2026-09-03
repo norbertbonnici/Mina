@@ -26,6 +26,7 @@ module "control_plane" {
 
   corp_management_cidrs = var.corp_management_cidrs
   public_hostname       = var.public_hostname
+  tunnel_connector_cidr = var.tunnel_connector_cidr
   ssh_public_keys       = var.ssh_public_keys
 
   cloud_image_url    = var.cloud_image_url

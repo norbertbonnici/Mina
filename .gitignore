@@ -73,5 +73,6 @@ backend.hcl
 *.tfplan
 set-proxmox-env.ps1
 set-proxmox-env.sh
+set-cloudflare-tunnel-token.txt
 # Linux build output from scripts/test-with-envoy-docker.sh
 .docker-out/

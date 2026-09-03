@@ -6,6 +6,11 @@
 # server block for the management listener. That is the point of putting the proxy on its own host —
 # a configuration mistake here cannot expose the approvals UI or the audit read API, because the
 # configuration that would expose them does not exist on this machine.
+#
+# Public TLS terminates in front of this host (a Cloudflare Tunnel connector at
+# tunnel_connector_cidr, or your own reverse proxy) rather than here — ADR-0006 constraint 3 still
+# holds (a public-CA certificate is what the internet sees), it just isn't installed on this VM.
+# nginx only needs to be reachable, over plain HTTP, from that one connector.
 
 package_update: true
 packages:
@@ -28,17 +33,13 @@ write_files:
   - path: /etc/nginx/sites-available/mina-node
     permissions: "0644"
     content: |
-      # The published endpoint. TLS is terminated here with a public-CA certificate (ADR-0006
-      # constraint 3) — issue it with certbot or install your own before enabling this site.
+      # Plain HTTP: the tunnel connector at tunnel_connector_cidr is the only thing that can reach
+      # this (see nftables below), and it already arrived over an encrypted, authenticated tunnel
+      # from Cloudflare's edge, which is where the public-facing TLS certificate actually lives.
       server {
-          listen 443 ssl;
-          listen [::]:443 ssl;
-          http2 on;
+          listen 80;
+          listen [::]:80;
           server_name ${public_hostname};
-
-          ssl_certificate     /etc/mina/tls/fullchain.pem;
-          ssl_certificate_key /etc/mina/tls/privkey.pem;
-          ssl_protocols       TLSv1.2 TLSv1.3;
 
           # Only the node API is proxied. Any other path is refused here as well as by the
           # application's own listener separation; the two are redundant on purpose.
@@ -46,7 +47,12 @@ write_files:
               proxy_pass http://${app_ip}:${node_port};
               proxy_set_header Host              $host;
               proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
+              # Hardcoded, not $scheme: nginx's own view is plain HTTP, but the request the public
+              # internet actually made was HTTPS (terminated at the tunnel's far end). The app
+              # trusts this for exactly one hop (Mina:Hosting:ForwardedProxyCount) -- if that chain
+              # ever grows past this proxy (e.g. something in front of the tunnel connector too),
+              # that setting needs revisiting alongside it.
+              proxy_set_header X-Forwarded-Proto https;
               proxy_read_timeout 60s;
           }
 
@@ -60,13 +66,6 @@ write_files:
           }
       }
 
-      server {
-          listen 80;
-          listen [::]:80;
-          server_name ${public_hostname};
-          return 301 https://$host$request_uri;
-      }
-
   - path: /etc/nftables.conf
     permissions: "0644"
     content: |
@@ -77,8 +76,9 @@ write_files:
           type filter hook input priority 0; policy drop;
           ct state established,related accept
           iif lo accept
-          # Published to the internet: this is the one host that accepts from anywhere.
-          tcp dport { 80, 443 } accept
+          # Only the tunnel connector may reach the node-facing listener -- nothing on the
+          # internet talks to this host directly, since public TLS terminates in front of it.
+          ip saddr ${tunnel_connector_cidr} tcp dport 80 accept
           # Administration from corporate ranges only.
 %{ for cidr in corp_cidrs ~}
           ip saddr ${cidr} tcp dport 22 accept
@@ -88,11 +88,14 @@ write_files:
       }
 
 runcmd:
-  - [ install, -d, -m, "0750", -o, root, -g, root, /etc/mina/tls ]
   - [ rm, -f, /etc/nginx/sites-enabled/default ]
   - [ ln, -sf, /etc/nginx/sites-available/mina-node, /etc/nginx/sites-enabled/mina-node ]
   - [ systemctl, enable, --now, nftables ]
   - [ systemctl, enable, --now, qemu-guest-agent ]
-  # nginx is intentionally NOT started here: it would fail without a certificate, and a proxy that
-  # restart-loops is harder to diagnose than one that is plainly not started yet. Install the
-  # certificate into /etc/mina/tls, then: nginx -t && systemctl enable --now nginx
+  # The Debian/Ubuntu nginx package starts the service immediately on install, with the stock
+  # default site -- before this cloud-init boot even reaches this line. "enable --now" on an
+  # already-running service is a no-op that doesn't reload config, which silently leaves the
+  # default site (not ours) serving every request. Restart, not enable --now, to force it to
+  # actually pick up /etc/nginx/sites-enabled/mina-node regardless of that race.
+  - [ systemctl, enable, nginx ]
+  - [ systemctl, restart, nginx ]

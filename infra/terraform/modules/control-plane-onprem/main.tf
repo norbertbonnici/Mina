@@ -46,11 +46,12 @@ resource "proxmox_virtual_environment_file" "proxy_init" {
   source_raw {
     file_name = "${var.prefix}-cp-proxy.yaml"
     data = templatefile("${path.module}/templates/proxy.cloud-init.yaml.tftpl", {
-      ssh_keys        = var.ssh_public_keys
-      public_hostname = var.public_hostname
-      app_ip          = local.app_ip
-      node_port       = var.node_listener_port
-      corp_cidrs      = var.corp_management_cidrs
+      ssh_keys             = var.ssh_public_keys
+      public_hostname      = var.public_hostname
+      app_ip               = local.app_ip
+      node_port            = var.node_listener_port
+      corp_cidrs           = var.corp_management_cidrs
+      tunnel_connector_cidr = var.tunnel_connector_cidr
     })
   }
 }

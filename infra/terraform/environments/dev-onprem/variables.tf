@@ -68,6 +68,14 @@ variable "public_hostname" {
   type        = string
 }
 
+variable "tunnel_connector_cidr" {
+  description = <<-EOT
+    Address (as a /32, or a range) of the reverse-tunnel connector that is the only thing allowed
+    to reach the proxy's node-facing listener; see the module variable of the same name.
+  EOT
+  type        = string
+}
+
 variable "ssh_public_keys" {
   description = "Administrator SSH public keys."
   type        = list(string)
