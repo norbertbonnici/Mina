@@ -11,6 +11,7 @@ package_update: true
 packages:
   - nginx
   - nftables
+  - qemu-guest-agent
 
 users:
   - default
@@ -91,6 +92,7 @@ runcmd:
   - [ rm, -f, /etc/nginx/sites-enabled/default ]
   - [ ln, -sf, /etc/nginx/sites-available/mina-node, /etc/nginx/sites-enabled/mina-node ]
   - [ systemctl, enable, --now, nftables ]
+  - [ systemctl, enable, --now, qemu-guest-agent ]
   # nginx is intentionally NOT started here: it would fail without a certificate, and a proxy that
   # restart-loops is harder to diagnose than one that is plainly not started yet. Install the
   # certificate into /etc/mina/tls, then: nginx -t && systemctl enable --now nginx

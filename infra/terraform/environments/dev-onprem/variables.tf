@@ -23,6 +23,16 @@ variable "dmz_vlan_id" {
   type        = number
 }
 
+variable "dmz_vlan_tagged" {
+  description = <<-EOT
+    Whether the guest NIC should 802.1Q-tag traffic with dmz_vlan_id. Set false when the switch
+    port instead carries dmz_vlan_id as its native/untagged VLAN -- tagging it anyway double-tags
+    and the traffic goes nowhere (see the module variable of the same name for the full story).
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "dmz_gateway" {
   description = "Default gateway on the DMZ VLAN."
   type        = string

@@ -29,7 +29,10 @@ resource "proxmox_download_file" "ubuntu" {
   url                 = var.cloud_image_url
   checksum            = var.cloud_image_sha256
   checksum_algorithm  = "sha256"
-  file_name           = "${var.prefix}-ubuntu-24.04.img"
+  # Ubuntu publishes this as .img, but the file is actually QCOW2 internally (long-standing
+  # naming quirk). Proxmox's import validation checks the destination extension against known
+  # disk formats and rejects .img; .qcow2 is both accepted and accurate.
+  file_name           = "${var.prefix}-ubuntu-24.04.qcow2"
   overwrite_unmanaged = true
 }
 
@@ -114,7 +117,7 @@ resource "proxmox_virtual_environment_vm" "proxy" {
   # field must be present, so the ones the provider defaults are passed as null explicitly.
   network_device = [{
     bridge       = var.dmz_bridge
-    vlan_id      = var.dmz_vlan_id
+    vlan_id      = var.dmz_vlan_tagged ? var.dmz_vlan_id : null
     model        = "virtio"
     enabled      = true
     disconnected = false
@@ -177,7 +180,7 @@ resource "proxmox_virtual_environment_vm" "app" {
   # field must be present, so the ones the provider defaults are passed as null explicitly.
   network_device = [{
     bridge       = var.dmz_bridge
-    vlan_id      = var.dmz_vlan_id
+    vlan_id      = var.dmz_vlan_tagged ? var.dmz_vlan_id : null
     model        = "virtio"
     enabled      = true
     disconnected = false
@@ -240,7 +243,7 @@ resource "proxmox_virtual_environment_vm" "sql" {
   # field must be present, so the ones the provider defaults are passed as null explicitly.
   network_device = [{
     bridge       = var.dmz_bridge
-    vlan_id      = var.dmz_vlan_id
+    vlan_id      = var.dmz_vlan_tagged ? var.dmz_vlan_id : null
     model        = "virtio"
     enabled      = true
     disconnected = false

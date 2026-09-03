@@ -11,6 +11,7 @@ package_update: true
 packages:
   - nftables
   - ca-certificates
+  - qemu-guest-agent
 
 users:
   - default
@@ -76,6 +77,7 @@ runcmd:
   - [ install, -d, -m, "0750", -o, mina, -g, mina, /var/lib/mina ]
   - [ install, -d, -m, "0750", -o, root, -g, root, /etc/mina ]
   - [ systemctl, enable, --now, nftables ]
+  - [ systemctl, enable, --now, qemu-guest-agent ]
 
 # The application itself is deployed here separately -- provisioning creates the host, the account,
 # the firewall and the key-ring directory, not the build. Arc onboarding (M4-18) also lands here, and

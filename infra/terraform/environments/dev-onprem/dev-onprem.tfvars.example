@@ -13,6 +13,11 @@ snippet_datastore_id = "local"
 # --- DMZ network (ADR-0006 constraint 2) ----------------------------------------------------
 dmz_bridge  = "vmbr1"
 dmz_vlan_id = 30
+# Whether the guest NIC should 802.1Q-tag traffic with dmz_vlan_id. Leave true for a trunk port
+# expecting that tag. Set false if the switch port instead carries dmz_vlan_id as its native/
+# untagged VLAN -- tagging on top of that double-tags and the traffic goes nowhere, which looks
+# identical to a dead link from the guest's side (boots fine, no DNS/apt/SSH, nothing arrives).
+# dmz_vlan_tagged = false
 dmz_gateway = "10.20.30.1"
 dns_servers = ["10.10.0.53"]
 
@@ -32,5 +37,5 @@ ssh_public_keys = ["ssh-ed25519 AAAA... mina-admin"]
 # --- Base image ------------------------------------------------------------------------------
 # A dated release, not "current": AC-018 applies to the on-premises plane too since ADR-0006.
 # Get the digest from the SHA256SUMS file in the same release directory.
-cloud_image_url    = "https://cloud-images.ubuntu.com/releases/24.04/release-20250801/ubuntu-24.04-server-cloudimg-amd64.img"
-cloud_image_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+cloud_image_url    = "https://cloud-images.ubuntu.com/releases/24.04/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img"
+cloud_image_sha256 = "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30"

@@ -40,6 +40,18 @@ variable "dmz_vlan_id" {
   type        = number
 }
 
+variable "dmz_vlan_tagged" {
+  description = <<-EOT
+    Whether the guest NIC should 802.1Q-tag traffic with dmz_vlan_id. Proxmox's VLAN-aware bridges
+    tag unconditionally when a vlan_id is set, which only matches a trunk port configured to expect
+    that tag. Set false when the switch port instead carries dmz_vlan_id as its native/untagged
+    VLAN -- tagging it anyway double-tags and the traffic goes nowhere, which looks identical to a
+    dead link from the guest's side (boots fine, no DNS/apt/SSH, because nothing arrives at all).
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "dmz_gateway" {
   description = "Default gateway on the DMZ VLAN."
   type        = string

@@ -8,6 +8,7 @@
 package_update: true
 packages:
   - nftables
+  - qemu-guest-agent
 
 users:
   - default
@@ -42,6 +43,7 @@ write_files:
 
 runcmd:
   - [ systemctl, enable, --now, nftables ]
+  - [ systemctl, enable, --now, qemu-guest-agent ]
 
 # SQL Server installation and Azure Arc onboarding are M4-18. Arc is what makes
 # "Authentication=Active Directory Default" work from here, and that is the single mechanism

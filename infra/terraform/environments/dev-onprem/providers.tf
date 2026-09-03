@@ -5,4 +5,14 @@
 #
 #   export PROXMOX_VE_ENDPOINT="https://pve.fiau.local:8006/"
 #   export PROXMOX_VE_API_TOKEN="terraform@pve!mina=<uuid>"
-provider "proxmox" {}
+#
+# The "snippets" content type has no upload API, so the provider writes it over SFTP directly to
+# the node instead. That needs its own SSH username -- verified empirically that it does NOT fall
+# back to PROXMOX_VE_USERNAME the way ssh.username's schema description implies when api_token
+# auth is in use, so it's set here explicitly rather than guessed at again via another env var.
+# Not a secret: the key that makes this authenticate is PROXMOX_VE_SSH_PRIVATE_KEY (env var only).
+provider "proxmox" {
+  ssh {
+    username = "root"
+  }
+}
