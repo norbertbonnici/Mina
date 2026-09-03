@@ -63,17 +63,16 @@ variable "dns_servers" {
 }
 
 variable "app_address" {
-  description = "DMZ address of the control-plane application host, in CIDR form (e.g. 10.20.30.11/24)."
+  description = <<-EOT
+    DMZ address of the control-plane application host, in CIDR form (e.g. 10.20.30.11/24). This
+    module no longer creates that host (see app-onprem-windows) -- it only uses this to tell the
+    proxy's nginx config where to forward the node-facing listener.
+  EOT
   type        = string
 }
 
 variable "proxy_address" {
   description = "DMZ address of the publishing reverse proxy, in CIDR form."
-  type        = string
-}
-
-variable "sql_address" {
-  description = "DMZ address of the SQL Server host, in CIDR form."
   type        = string
 }
 
@@ -147,30 +146,6 @@ variable "cloud_image_sha256" {
     condition     = can(regex("^[0-9a-f]{64}$", var.cloud_image_sha256))
     error_message = "cloud_image_sha256 must be a 64-character lowercase hex digest."
   }
-}
-
-variable "app_cores" {
-  description = "vCPUs for the application host."
-  type        = number
-  default     = 2
-}
-
-variable "app_memory_mb" {
-  description = "Memory for the application host."
-  type        = number
-  default     = 4096
-}
-
-variable "sql_cores" {
-  description = "vCPUs for the SQL Server host."
-  type        = number
-  default     = 4
-}
-
-variable "sql_memory_mb" {
-  description = "Memory for the SQL Server host. SQL Server wants considerably more than the app."
-  type        = number
-  default     = 8192
 }
 
 variable "tags" {

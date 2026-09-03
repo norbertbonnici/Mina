@@ -25,6 +25,14 @@ proxy_address = "10.20.30.10/24"
 app_address   = "10.20.30.11/24"
 sql_address   = "10.20.30.12/24"
 
+# VM ID of a sysprepped, generalized Windows Server template. Both SQL Server and the application
+# host run on Windows now, not Linux (D-17's GA path to Entra/managed-identity auth for SQL Server
+# is Windows + SQL Server 2025 only, and the app host followed once it needed its own Arc identity
+# to authenticate to SQL with no stored credential -- see app-onprem-windows's header). Build the
+# template once (install Windows, sysprep /generalize /oobe /shutdown, then mark it a template),
+# then point this at its VM ID.
+windows_template_vm_id = 9113
+
 # Corporate ranges allowed to reach the management listener and to SSH to these hosts. Everything
 # else in the DMZ, and everything on the internet, is dropped.
 corp_management_cidrs = ["10.10.0.0/16"]

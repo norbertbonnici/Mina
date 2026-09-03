@@ -58,6 +58,15 @@ variable "sql_address" {
   type        = string
 }
 
+variable "windows_template_vm_id" {
+  description = <<-EOT
+    Proxmox VM ID of the sysprepped, generalized Windows Server template both the SQL Server host
+    and the application host are cloned from. Must already exist and be marked as a template --
+    Terraform only clones it.
+  EOT
+  type        = number
+}
+
 variable "corp_management_cidrs" {
   description = "Corporate ranges permitted to reach the management listener and administer the hosts."
   type        = list(string)

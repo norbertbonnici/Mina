@@ -1,16 +1,6 @@
-output "app_ip" {
-  description = "DMZ address of the control-plane application host."
-  value       = local.app_ip
-}
-
 output "proxy_ip" {
   description = "DMZ address of the publishing reverse proxy. Point the public DNS record here."
   value       = local.proxy_ip
-}
-
-output "sql_ip" {
-  description = "DMZ address of the SQL Server host."
-  value       = local.sql_ip
 }
 
 output "node_endpoint" {
