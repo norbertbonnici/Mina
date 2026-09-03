@@ -44,6 +44,24 @@
     required here because the SQL host uses a self-signed certificate in this environment; drop it
     once that host has a certificate issued by something the client trusts.
 
+.PARAMETER AzureAdTenantId
+    Entra tenant ID the API validates bearer tokens against (backlog M2-1). Optional -- omit to
+    leave the checked-in appsettings.json placeholder in place (the API starts, but every
+    JWT-bearer-protected endpoint rejects real tokens until this is set).
+
+.PARAMETER AzureAdClientId
+    Client ID (appId) of the Mina app registration the API validates as audience. The API is a
+    pure resource server here -- it validates incoming bearer tokens, it does not itself act as a
+    confidential client, so no client credential is needed on this side (that's only required by
+    the management UI's own sign-in flow, a separate deployment).
+
+.PARAMETER RequiredAuthContextId
+    Conditional Access authentication context ID (e.g. "c1") session issuance must request,
+    completing backlog M2-1's second half (ARCHITECTURE.md §4). Optional -- the check is already
+    implemented and tested in code, but stays inert (no context required) until this is set, which
+    itself requires the authentication context and its bound CA policy to exist in the tenant
+    first (see scripts/finish-m2-1-conditional-access.sh).
+
 .PARAMETER NodePort
     Port for the internet-published, node-facing listener. Default 8443.
 
@@ -97,6 +115,15 @@ param(
     [string]$ProxyAddress,
 
     [string]$SqlConnectionString,
+
+    [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')]
+    [string]$AzureAdTenantId,
+
+    [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')]
+    [string]$AzureAdClientId,
+
+    [ValidatePattern('^c[0-9]{1,3}$')]
+    [string]$RequiredAuthContextId,
 
     [ValidateRange(1, 65535)]
     [int]$NodePort = 8443,
@@ -172,6 +199,52 @@ function Invoke-GuestPS {
     } while (($null -eq $status -or -not $status.data.exited) -and $tries -lt $TimeoutTries)
     if (-not $status) { throw "gave up polling guest-agent exec-status for pid $execPid after $TimeoutTries tries" }
     return $status.data
+}
+
+function Submit-GuestPS {
+    <# Starts a PowerShell script on the guest and returns immediately with its pid -- does not
+       wait for or poll exec-status. Use for long-running commands (a multi-MB download) paired
+       with Wait-GuestFileReady, since exec-status polling has been observed to give up on this
+       guest agent for commands that take real wall-clock time, even though the command itself
+       completes fine (see feedback memory). #>
+    param([Parameter(Mandatory)][string]$Script)
+    $scriptBytes = [System.Text.Encoding]::Unicode.GetBytes($Script)
+    $encoded = [Convert]::ToBase64String($scriptBytes)
+    $jsonBody = @{ command = @("powershell.exe", "-NonInteractive", "-NoProfile", "-EncodedCommand", $encoded) } | ConvertTo-Json -Compress
+    $exec = Invoke-RestMethod -Uri "$baseUrl/nodes/$ProxmoxNode/qemu/$VmId/agent/exec" -Method Post -Headers $pveHeaders -Body $jsonBody -ContentType "application/json"
+    if (-not $exec.data.pid) { throw "guest-agent exec did not return a pid: $($exec | ConvertTo-Json -Compress)" }
+    return $exec.data.pid
+}
+
+function Wait-GuestFileReady {
+    <# Polls the guest (via small, fast, independent exec calls -- not the long-running command's
+       own exec-status) until $Path exists and its size has stopped changing across two
+       consecutive checks, or $MaxWaitSeconds elapses. Confirms completion by observable result,
+       not by trusting a single flaky status channel. #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [int]$MaxWaitSeconds = 180,
+        [int]$PollIntervalSeconds = 5
+    )
+    $elapsed = 0
+    $lastSize = -1
+    $stableCount = 0
+    while ($elapsed -lt $MaxWaitSeconds) {
+        Start-Sleep -Seconds $PollIntervalSeconds
+        $elapsed += $PollIntervalSeconds
+        $check = Invoke-GuestPS -Script "if (Test-Path '$Path') { (Get-Item '$Path').Length } else { 'MISSING' }" -TimeoutTries 15
+        $out = $check.'out-data'.Trim()
+        if ($out -eq 'MISSING' -or -not $out) { continue }
+        $size = 0
+        if ([int64]::TryParse($out, [ref]$size) -and $size -eq $lastSize -and $size -gt 0) {
+            $stableCount++
+            if ($stableCount -ge 2) { return $size }
+        } else {
+            $stableCount = 0
+        }
+        $lastSize = $size
+    }
+    throw "Wait-GuestFileReady: $Path did not stabilize within ${MaxWaitSeconds}s (last observed size: $lastSize)"
 }
 
 function Invoke-GuestPSChecked {
@@ -275,12 +348,20 @@ try {
         Invoke-GuestPS -Script "Import-Module WebAdministration; Stop-WebAppPool -Name '$AppPoolName' -ErrorAction SilentlyContinue" | Out-Null
 
         Write-Host "==> Downloading publish artifact onto the guest"
+        # Fire-and-forget + poll-for-result rather than Invoke-GuestPSChecked: exec-status
+        # polling has been observed to give up on this specific step (a several-MB download
+        # taking real wall-clock time under guest I/O load) even though the download itself
+        # completes fine every time (verified manually, repeatedly). Wait-GuestFileReady confirms
+        # completion by the actual file size stabilizing, checked via fresh, fast, independent
+        # calls, instead of trusting one long-running command's own status channel.
+        Invoke-GuestPS -Script "Remove-Item 'C:\Windows\Temp\mina-api-publish.zip' -Force -ErrorAction SilentlyContinue" -TimeoutTries 15 | Out-Null
         $downloadScript = @"
 `$ErrorActionPreference = 'Stop'
 Invoke-WebRequest -Uri '$sasUrl' -OutFile 'C:\Windows\Temp\mina-api-publish.zip' -UseBasicParsing
-(Get-Item 'C:\Windows\Temp\mina-api-publish.zip').Length
 "@
-        Invoke-GuestPSChecked -Script $downloadScript -TimeoutTries 90 | Out-Null
+        Submit-GuestPS -Script $downloadScript | Out-Null
+        $downloadedSize = Wait-GuestFileReady -Path 'C:\Windows\Temp\mina-api-publish.zip' -MaxWaitSeconds 180 -PollIntervalSeconds 5
+        Write-Host "    downloaded $downloadedSize bytes"
     }
     finally {
         Write-Host "==> Removing scratch container $containerName"
@@ -416,6 +497,9 @@ Grant-MinaAcl '$deployPathLiteral' '(OI)(CI)(RX)'
         "Mina__Audit__ExportPath"                    = "C:\ProgramData\Mina\audit-exports"
         "ConnectionStrings__MinaDb"                  = $SqlConnectionString
     }
+    if ($AzureAdTenantId) { $envVars["AzureAd__TenantId"] = $AzureAdTenantId }
+    if ($AzureAdClientId) { $envVars["AzureAd__ClientId"] = $AzureAdClientId }
+    if ($RequiredAuthContextId) { $envVars["Mina__Session__RequiredAuthContextId"] = $RequiredAuthContextId }
     # Sent via stdin (Invoke-GuestPSStdin), not interpolated into the script text, specifically so
     # a connection string or key path containing a quote or backtick can't break out of the
     # generated PowerShell -- JSON-encode here, JSON-decode on the guest.
