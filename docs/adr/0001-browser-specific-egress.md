@@ -161,10 +161,11 @@ detective controls, or escalate C3 as a requirements change.
 
 Status keys: ⬜ not started · 🟡 partially evidenced · ✅ evidenced. Transport items are proven
 on the dev machine. Windows items were blocked on a Windows 11 lab machine until 2026-09-04,
-when item 1 was evidenced on the admin workstation (Windows Server 2025, build 26100 — the same
-kernel and WFP stack as Windows 11 24H2). That substitution is sound for identification
-behaviour but not for the Intune/managed-client half: anything about enrolment, compliance or
-policy delivery still needs a real managed Windows 11 client.
+when items 1 and 2 — and the Edge half of item 3 — were evidenced on the admin workstation
+(Windows Server 2025, build 26100 — the same kernel and WFP stack as Windows 11 24H2, with Edge
+Stable 152 and Edge Beta 153 installed at distinct image paths). That substitution is sound for
+identification and policy-scope behaviour but not for the Intune/managed-client half: anything
+about enrolment, compliance or policy delivery still needs a real managed Windows 11 client.
 
 1. ✅ WFP/per-app identification is image-path-only. **Evidenced 2026-09-04** by
    `tests/security/windows-enforcement/Invoke-C2Verification.ps1`, run against Edge Stable
@@ -184,12 +185,39 @@ policy delivery still needs a real managed Windows 11 client.
    address as loopback and exempts it from outbound filtering, so a canary listening on the
    test machine is reached even by a comprehensively blocked process. On-box canaries make
    every case pass. This applies to the M1-6 leak suites too — point them off-box.
-2. ⬜ Edge channels share the policy registry location; flag-based hardening holds for a spawned
-   instance (`--proxy-server`, WebRTC IP-handling, QUIC and DoH disablement flags — exact flag
-   and policy names to be pinned).
+2. 🟡 Edge channels share the policy registry location; flag-based hardening holds for a spawned
+   instance. **Constraint confirmed 2026-09-04** by
+   `tests/security/windows-enforcement/Invoke-PolicyScopeVerification.ps1`. A single
+   `HKLM\SOFTWARE\Policies\Microsoft\Edge` fixed-proxy policy pointed at a dead local port took
+   Stable from 24 packets to 0, Beta from 24 to 0, and a second `--user-data-dir` profile to 0 —
+   so one machine-wide location governs **both channels and every profile**, exactly as
+   constraint 2 assumes. Removing the policy returned Stable to 23 packets, which is what makes
+   those zeros attributable to the policy rather than to a broken path. `--proxy-server` passed
+   as a launch flag produced 0 as well, so per-launch hardening does bind a spawned instance.
+   Proven behaviourally rather than by reading `edge://policy`, because an unrecognised policy
+   name sits in the registry looking correct and changes nothing.
+   *Pinned:* `--proxy-server=<host:port>`; policy
+   `ProxySettings={"ProxyMode":"fixed_servers","ProxyServer":"<host:port>"}` (REG_SZ). The older
+   `ProxyMode` + `ProxyServer` pair is documented as **deprecated** but was verified still
+   honoured by Edge 152/153 — the current form was tested precisely so shipping configuration
+   need not rest on a deprecated name.
+   *Remaining:* the QUIC, DoH and WebRTC names are **not pinned**. Documented candidates are
+   `QuicAllowed` (DWORD), `DnsOverHttpsMode` (REG_SZ: off/automatic/secure) with
+   `BuiltInDnsClientEnabled` (DWORD), `WebRtcLocalhostIpHandling` (REG_SZ, values including
+   `disable_non_proxied_udp`) and `NetworkPredictionOptions` (DWORD, 0 to disable prefetch, for
+   THREAT_MODEL N12) — but each needs its own observation to confirm the name is real and takes
+   effect (an HTTP/3 origin, DNS capture, an ICE harness), which lands with items 4 and 5. Do
+   not write these into `edge-integration/` as settled until then.
 3. 🟡 Fixed-proxy fail-closed behaviour (no DIRECT fallback). *Agent-side* fail-closed is proven
-   in `tests/integration` (tunnel loss ⇒ HTTP 502, never a direct path); the Edge-fixed-proxy
-   behaviour across the ring still needs the Windows lab.
+   in `tests/integration` (tunnel loss ⇒ HTTP 502, never a direct path). **The Edge side is now
+   evidenced too, 2026-09-04** by the item 2 run above: with a fixed proxy that nothing was
+   listening on — set as policy, as a second profile, and as a launch flag — direct egress to
+   the target measured 0 packets in every case, against a 23–24 packet baseline and control. An
+   unreachable fixed proxy yields no connection rather than a direct one, which is the property
+   the whole fail-closed design leans on.
+   *Remaining:* this is one machine and one Edge build. Behaviour across the ring (multiple
+   builds, managed clients, the update channel moving underneath) still needs the Intune test
+   ring, and the browser is only half the path — the agent-side half is separately proven.
 4. ⬜ No pre-proxy traffic at browser startup under C2 (WFP up before spawn).
 5. ⬜ WebRTC leak harness passes with the chosen flag/policy set.
 6. 🟡 Envoy CONNECT termination + mTLS client-cert authorisation. **Functionally evidenced**
