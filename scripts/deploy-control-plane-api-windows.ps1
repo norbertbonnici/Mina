@@ -364,8 +364,19 @@ New-Item -Path $publishDir -ItemType Directory -Force | Out-Null
 $zipPath = "$publishDir.zip"
 
 try {
+    # A RID-specific publish must not rewrite the RID-agnostic lock files the solution restores
+    # from. Directory.Build.props enables lock files for every project, so a plain
+    # `dotnet publish -r win-x64` appends a net10.0/win-x64 section to every packages.lock.json in
+    # the dependency graph; committing those breaks CI's `dotnet restore Mina.slnx
+    # --locked-mode` with NU1004. RestorePackagesWithLockFile=false on its own is refused with
+    # NU1005 while a lock file exists on disk, so NuGetLockFilePath additionally points the
+    # lock-file lookup at a path that does not exist. Nothing is read from or written to it,
+    # and every package version is pinned, so resolution is unchanged.
+    $lockRedirect = Join-Path ([System.IO.Path]::GetTempPath()) "mina-nolock-$([Guid]::NewGuid().ToString('N').Substring(0,8)).json"
     dotnet publish (Join-Path $repoRoot "control-plane\src\Mina.ControlPlane.Api\Mina.ControlPlane.Api.csproj") `
-        -c Release -r win-x64 --no-self-contained -o $publishDir
+        -c Release -r win-x64 --no-self-contained `
+        -p:RestorePackagesWithLockFile=false -p:NuGetLockFilePath=$lockRedirect `
+        -o $publishDir
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
     Write-Host "==> Compressing publish output"

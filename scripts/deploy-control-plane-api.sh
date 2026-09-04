@@ -46,8 +46,19 @@ ssh_cmd=(ssh -o BatchMode=yes -i "$SSH_KEY" "$TARGET_USER@$TARGET_HOST")
 scp_cmd=(scp -o BatchMode=yes -i "$SSH_KEY" -q)
 
 echo "==> Publishing Mina.ControlPlane.Api (linux-x64, framework-dependent)"
+# A RID-specific publish must not rewrite the RID-agnostic lock files the solution restores
+# from. Directory.Build.props enables lock files for every project, so a plain
+# `dotnet publish -r linux-x64` appends a net10.0/linux-x64 section to every packages.lock.json
+# in the dependency graph; committing those breaks CI's `dotnet restore Mina.slnx
+# --locked-mode` with NU1004. RestorePackagesWithLockFile=false on its own is refused with
+# NU1005 while a lock file exists on disk, so NuGetLockFilePath additionally points the
+# lock-file lookup at a path that does not exist. Nothing is read from or written to it, and
+# every package version is pinned, so resolution is unchanged.
+LOCK_REDIRECT="$(mktemp -u)"
 dotnet publish "$REPO_ROOT/control-plane/src/Mina.ControlPlane.Api/Mina.ControlPlane.Api.csproj" \
-  -c Release -r linux-x64 --no-self-contained -o "$PUBLISH_DIR"
+  -c Release -r linux-x64 --no-self-contained \
+  -p:RestorePackagesWithLockFile=false -p:NuGetLockFilePath="$LOCK_REDIRECT" \
+  -o "$PUBLISH_DIR"
 
 echo "==> Ensuring the ASP.NET Core runtime is installed on $TARGET_HOST"
 "${ssh_cmd[@]}" 'command -v dotnet >/dev/null 2>&1 && dotnet --list-runtimes | grep -q "Microsoft.AspNetCore.App 10\."' || \

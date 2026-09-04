@@ -19,13 +19,16 @@
 # variable for what still needs a real hosting decision (M4-29 items 2/3 are close neighbours of
 # that decision, not yet made).
 #
-# Restoring for -r linux-x64 rewrites packages.lock.json for this project AND for any other
-# project's lock file that happens to get restored transitively in the same pass (seen with
+# Restoring for -r linux-x64 would otherwise rewrite packages.lock.json for this project AND
+# for any other project restored transitively in the same pass (seen with
 # integrations/signoz/src/Mina.Observability, shared with the Windows endpoint agent) -- a
-# single-RID restore replaces that project's existing win-x64 lock section rather than adding
-# linux-x64 alongside it. Check `git status` after running this locally and revert any lock file
-# outside egress-node/src/Mina.EgressNode.Sidecar before committing; CI's sidecar-publish job
-# doesn't commit anything, so it can't make this mistake, only a human running this locally can.
+# single-RID restore replaces a project's existing RID section rather than adding one
+# alongside it. The solution is restored RID-agnostically (CI runs `dotnet restore Mina.slnx
+# --locked-mode`), so a stray net10.0/linux-x64 section breaks it with NU1004. The publish
+# below therefore disables lock files: RestorePackagesWithLockFile=false on its own is refused
+# with NU1005 while a lock file exists on disk, so NuGetLockFilePath additionally points the
+# lock-file lookup at a path that does not exist. Nothing is read from or written to it, and
+# every package version is pinned, so resolution is unchanged.
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
@@ -42,9 +45,11 @@ expected_binary="Mina.EgressNode.Sidecar"
 rm -rf "$out"
 mkdir -p "$out"
 
+LOCK_REDIRECT="$(mktemp -u)"
 dotnet publish "$project" \
   -c Release \
   -r linux-x64 \
+  -p:RestorePackagesWithLockFile=false -p:NuGetLockFilePath="$LOCK_REDIRECT" \
   --self-contained true \
   -p:PublishSingleFile=true \
   -p:IncludeNativeLibrariesForSelfExtract=true \
