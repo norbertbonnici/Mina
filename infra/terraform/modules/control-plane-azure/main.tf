@@ -32,6 +32,17 @@ resource "azurerm_resource_group" "control" {
   tags     = merge(var.tags, { "mina:plane" = "control" })
 }
 
+locals {
+  # Key Vault's network_acls.ip_rules accepts a /32 CIDR directly. Storage Account's
+  # network_rules.ip_rules does not -- Azure rejects /31 and /32 there specifically ("must start
+  # with IPV4 address and/or slash, number of bits (0-30) as prefix"), wanting a bare address for
+  # a single host instead. Same input, two resource types, two accepted shapes -- strip only the
+  # /32 suffix (a genuine range like /24 is untouched) so one variable serves both correctly.
+  storage_safe_control_plane_egress_cidrs = [
+    for cidr in var.control_plane_egress_cidrs : trimsuffix(cidr, "/32")
+  ]
+}
+
 # ---------------------------------------------------------------------------------------------
 # Key Vault: the internal CA signing key (SR-005, M2-2c)
 # ---------------------------------------------------------------------------------------------
@@ -66,6 +77,19 @@ resource "azurerm_key_vault" "cp" {
   tags = merge(var.tags, { "mina:plane" = "control" })
 }
 
+data "azurerm_client_config" "current" {}
+
+# RBAC mode means the vault starts with no data-plane access at all, including for whoever is
+# about to create a key in it -- unlike access-policy mode, there's no implicit "creator gets
+# rights" behavior. Grants the identity running Terraform itself the role needed to create/manage
+# keys; it does not grant the on-premises control plane's own Arc identity anything, because that
+# consumer-side access is M2-2c's own scope (the Key-Vault-backed CA), not this apply's.
+resource "azurerm_role_assignment" "deployer_crypto_officer" {
+  scope                = azurerm_key_vault.cp.id
+  role_definition_name = "Key Vault Crypto Officer"
+  principal_id          = data.azurerm_client_config.current.object_id
+}
+
 # Created in the vault, so the private material is generated there and never exists in Terraform
 # state or on any operator's machine. P-256 matches the curve the PKI issues with
 # (Mina.ControlPlane.Pki uses ECDsa nistP256).
@@ -75,6 +99,10 @@ resource "azurerm_key_vault_key" "ca_signing" {
   key_type     = "EC"
   curve        = "P-256"
   key_opts     = ["sign", "verify"]
+
+  # RBAC role assignments take a short but real time to propagate; without this Terraform can
+  # (and did, once) try to create the key before the grant above is actually enforceable yet.
+  depends_on = [azurerm_role_assignment.deployer_crypto_officer]
 
   tags = merge(var.tags, { "mina:purpose" = "internal-ca-signing" })
 }
@@ -114,7 +142,7 @@ resource "azurerm_storage_account" "audit" {
   network_rules {
     default_action = "Deny"
     bypass         = ["AzureServices"]
-    ip_rules       = var.control_plane_egress_cidrs
+    ip_rules       = local.storage_safe_control_plane_egress_cidrs
   }
 
   # WORM. `immutability_period_since_creation_in_days` is what makes an anchor an anchor: within

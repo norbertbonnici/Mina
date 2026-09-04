@@ -27,6 +27,11 @@ node_image_version = "24.04.202508190"
 # leave it open and anyone can try.
 control_plane_egress_cidrs = ["203.0.113.20/32"]
 
+# The node-facing control-plane endpoint every egress node's sidecar calls to admit tunnels
+# (M4-17) -- required, no default, since M4-11 a node that can't reach this refuses everything.
+# For the dev-onprem control plane this is its published DMZ endpoint:
+control_plane_node_url = "https://mina-cp.bonnicilabs.com"
+
 # --- Diagnostics ---------------------------------------------------------------------------
 # Export the subscription Activity Log to the diagnostics workspace. This is what records someone
 # deleting the audit storage account or removing its immutability policy — data-plane logging does

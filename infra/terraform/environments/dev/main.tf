@@ -38,11 +38,32 @@ module "egress_stamp" {
   prefix                = module.naming.prefix
   tags                  = module.naming.tags
   instance_count        = 1
-  vm_sku                = "Standard_B2s"
+  # BLOCKED (2026-09-04): every mainstream VM family (B-series, D-series -- confirmed via the
+  # Microsoft.Compute/skus API for Standard_B2s, Standard_B2ms and Standard_D2s_v5, in both
+  # northeurope and germanywestcentral) reports "reasonCode: NotAvailableForSubscription" for
+  # this subscription. Only exotic/expensive families (confidential-compute DC-series,
+  # huge-memory M-series, HPC, GPU) come back unrestricted. Core quota itself is fine (0/4 vCPUs
+  # used in the standard families) -- this is Azure's restricted-VM-SKU-access gate that some
+  # subscription offer types (free trial / sponsorship credit) apply to abuse-prone cheap
+  # families, not a capacity or quota problem, and not something a different SKU or region works
+  # around. Unblocking it needs a support-ticket "Quota increase" request in the Azure Portal for
+  # this subscription requesting access to a standard VM series (e.g. Bsv2 or Dsv5) -- see the
+  # 2026-09-04 decision log. Left as Standard_B2ms (still blocked) rather than switched to an
+  # available-but-wrong-class SKU, so the very next `terraform apply` after the ticket is granted
+  # is the real, cost-appropriate test.
+  vm_sku                = "Standard_B2ms"
   ingress_allowed_cidrs = var.ingress_allowed_cidrs
   corp_public_cidrs     = var.corp_public_cidrs
   admin_ssh_public_key  = var.admin_ssh_public_key
   node_image_version    = var.node_image_version
+
+  # This subscription's hard quota in northeurope is 3 Standard IPv4 public IPs total (confirmed
+  # via `az network list-usages`); the ingress LB's own public IP already claims 1 of those. The
+  # module default (/30, 4 addresses, for production rotation headroom) would push the total to
+  # 5. /31 is the smallest size Azure's Public IP Prefix accepts, landing exactly on the
+  # remaining quota. Dev deliberately forgoes NAT rotation headroom here -- a PoC constraint on a
+  # free-tier-shaped subscription, not a design change.
+  nat_ip_prefix_length = 31
 
   # The committed Envoy configuration is injected here, so what is in git is what the node runs.
   # The module accepted custom_data all along and nothing ever passed it, which meant the VMSS

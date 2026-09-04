@@ -2,6 +2,18 @@ variable "egress_region" {
   description = "Region for the dev PoC egress stamp (from the D-08 candidate list)."
   type        = string
   default     = "westeurope"
+
+  validation {
+    # D-08's approved EU launch regions -- nothing else enforces this. Getting the region wrong
+    # is exactly the kind of thing CLAUDE.md requires a human decision for ("changing the
+    # approved production region/public-IP strategy"), so a typo or a copy-pasted unapproved
+    # region fails the plan instead of silently standing up a stamp somewhere unapproved.
+    condition = contains(
+      ["westeurope", "northeurope", "germanywestcentral", "francecentral"],
+      var.egress_region
+    )
+    error_message = "egress_region must be one of D-08's approved launch regions: westeurope, northeurope, germanywestcentral, francecentral."
+  }
 }
 
 variable "ingress_allowed_cidrs" {

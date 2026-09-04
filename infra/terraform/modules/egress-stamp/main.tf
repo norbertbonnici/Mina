@@ -286,8 +286,11 @@ resource "azurerm_linux_virtual_machine_scale_set" "nodes" {
     public_key = var.admin_ssh_public_key
   }
 
-  # Hardened image + Envoy bootstrap arrive with M1-2; until then a stock LTS base boots and
-  # fails the LB probe, which is the correct fail-closed default.
+  # M1-2's cloud-init now wires the real Envoy config in (custom_data above); a hardened custom
+  # image built in the pipeline, rather than installed at boot from this stock LTS base, is the
+  # one piece of M1-2 still open. Until the sidecar itself has a real build too (M4-29), the node
+  # still fails the LB probe and refuses every tunnel -- correct fail-closed, just for a
+  # different reason than "nothing installed" now.
   source_image_reference {
     publisher = "Canonical"
     offer     = "ubuntu-24_04-lts"

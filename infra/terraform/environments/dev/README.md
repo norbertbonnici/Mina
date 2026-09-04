@@ -21,6 +21,7 @@ Costs sit inside the D-04 envelope (`docs/COST_MODEL.md` §3); deallocate the VM
 | `ingress_allowed_cidrs` | `dev.auto.tfvars` | Who may reach the tunnel ingress (D-07). |
 | `corp_public_cidrs` | `dev.auto.tfvars` | Organisation public ranges nodes must never reach (AC-017). |
 | `control_plane_egress_cidrs` | `dev.auto.tfvars` | Public addresses the Proxmox control plane reaches Azure from. Key Vault and audit storage deny by default and admit only these. |
+| `control_plane_node_url` | `dev.auto.tfvars` | The published DMZ endpoint every egress node's sidecar calls to admit tunnels (M4-17). **No default on purpose** — since M4-11 a node that can't reach this refuses all research browsing. For dev-onprem: `https://mina-cp.bonnicilabs.com`. |
 | `admin_ssh_public_key` | `dev.auto.tfvars` | Node admin access. |
 
 ## First-time setup
