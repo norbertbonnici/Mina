@@ -35,8 +35,22 @@ function Invoke-Quietly {
     param([Parameter(Mandatory)] [scriptblock] $Block)
 
     $prev = $ErrorActionPreference
+    # Read the previous exit code defensively: in a fresh session $LASTEXITCODE is undefined, and
+    # this module runs under Set-StrictMode, where reading an undefined variable throws.
+    $hadExit  = Test-Path -Path 'variable:global:LASTEXITCODE'
+    $prevExit = if ($hadExit) { $global:LASTEXITCODE } else { $null }
+
     $ErrorActionPreference = 'Continue'
-    try { & $Block 2>$null } catch { } finally { $ErrorActionPreference = $prev }
+    try { & $Block 2>$null } catch { }
+    finally {
+        $ErrorActionPreference = $prev
+        # Restore the exit code as well as the preference. Suppressing the error stream does not
+        # suppress $LASTEXITCODE, so a benign cleanup call -- taskkill on an already-dead pid
+        # leaves 128 -- otherwise becomes the script's own exit status. A harness that reports
+        # its result in an object and then exits non-zero on a successful run is worse than
+        # noisy: it makes every run look failed to anything reading exit codes.
+        if ($hadExit) { $global:LASTEXITCODE = $prevExit }
+    }
 }
 
 function Stop-ProcessTree {

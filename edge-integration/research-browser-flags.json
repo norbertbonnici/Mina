@@ -23,6 +23,7 @@
   "launchFlags": [
     "--user-data-dir={ResearchProfileDir}",
     "--proxy-server=http://127.0.0.1:{AgentProxyPort}",
+    "--proxy-bypass-list=<-loopback>",
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--no-first-run",
     "--no-default-browser-check"

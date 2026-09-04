@@ -33,6 +33,7 @@ boundary is the image path.
 |---|---|---|
 | `--user-data-dir={ResearchProfileDir}` | Keeps research browsing state out of the analyst's ordinary profile. | Register item 1 — state separation only; the network boundary is the image path. |
 | `--proxy-server=http://127.0.0.1:{AgentProxyPort}` | The browser's only route out. A fixed proxy has no `DIRECT` alternative, so when the agent is not serving, browsing fails rather than falling back to corporate egress. | Register items 2 and 3, `Invoke-PolicyScopeVerification.ps1`: the flag binds a spawned instance, and with nothing listening on the proxy, direct egress measured **zero** packets at the NIC against a live baseline and a recovering control. |
+| `--proxy-bypass-list=<-loopback>` | Removes Chromium's built-in exemption for loopback destinations, so a research page cannot reach services on the analyst's own machine. | `Invoke-LoopbackBypassVerification.ps1`: with a **dead** proxy — so any success proves the proxy was bypassed — the browser reached a local service by default, **and still did so under the C2 image-path block**, because Windows does not filter loopback. With this flag it did not. Confirmed against a live proxy not to break the route to the agent, which also lives on loopback. |
 | `--webrtc-ip-handling-policy=disable_non_proxied_udp` | Stops WebRTC putting UDP on the wire outside the proxy. | Register item 5, `Invoke-WebRtcLeakVerification.ps1`: **a fixed proxy does not stop WebRTC UDP at all** — this flag took it to zero transmitted and zero ICE candidates gathered, i.e. suppressed at source. |
 | `--no-first-run`, `--no-default-browser-check` | Operational hygiene, not security. Keeps an unattended launch from stalling on first-run UI. | — |
 
@@ -88,10 +89,10 @@ owner decides that trade is worth making for defence in depth, the names above a
 - **`NetworkPredictionOptions`** (prefetch/preconnect, THREAT_MODEL N12). Deliberately unpinned:
   it belongs with the ADR-0007 decision on which background services the research profile
   disables, and pinning it alone would pre-empt that.
-- **`--proxy-bypass-list=<-loopback>`** — a candidate, **not verified, not shipped**. Chromium
-  bypasses the proxy for loopback destinations by default, so a research page can reach services
-  on the analyst's own machine directly; WFP does not stop this because Windows does not filter
-  loopback. Worth measuring and, if it behaves, adding.
+*(`--proxy-bypass-list=<-loopback>` was on this list until 2026-09-04; it is measured and shipped
+now — see the flag table. The gap it closes was real: **the image-path block did not stop a
+research page reaching the analyst's own loopback services**, so the browser flag is the only
+control available for that path, not a second layer over one.)*
 
 ## How the pieces fit
 

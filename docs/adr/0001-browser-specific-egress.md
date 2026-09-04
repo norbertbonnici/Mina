@@ -232,6 +232,17 @@ about enrolment, compliance or policy delivery still needs a real managed Window
    the target measured 0 packets in every case, against a 23–24 packet baseline and control. An
    unreachable fixed proxy yields no connection rather than a direct one, which is the property
    the whole fail-closed design leans on.
+   *Qualification found 2026-09-04, and closed:* "no route out but the proxy" was **not true for
+   loopback destinations**. Chromium exempts loopback from proxying by default, and Windows does
+   not filter loopback, so the C2 image-path rules did not cover it either — measured with a dead
+   proxy (any success therefore proving the proxy was bypassed) in
+   `tests/security/windows-enforcement/Invoke-LoopbackBypassVerification.ps1`: the research
+   browser reached a service on the endpoint **both** with a fixed proxy configured and with the
+   image-path block in force. That let a research page reach services on the analyst's own
+   machine. `--proxy-bypass-list=<-loopback>` closes it, is verified not to break the route to
+   the agent's proxy (which is itself on loopback), and now ships in `edge-integration`. Worth
+   noting that here the browser flag is the **only** control for that path rather than a second
+   layer over the network one.
    *Remaining:* this is one machine and one Edge build. Behaviour across the ring (multiple
    builds, managed clients, the update channel moving underneath) still needs the Intune test
    ring, and the browser is only half the path — the agent-side half is separately proven.
