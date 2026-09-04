@@ -1,0 +1,13 @@
+@page "/access-denied"
+@* Reached only by the cookie authentication handler's AccessDeniedPath (configured in
+   ManagementUiAuthentication) after a static server-side render's [Authorize] check fails --
+   Blazor's own <NotAuthorized> fragment in Routes.razor only applies to interactive rendering,
+   which this app doesn't use, so a denied static SSR request never reaches it. Deliberately not
+   [Authorize]-attributed: the whole point is to be reachable by a signed-in user who just failed
+   an authorization check. *@
+
+<h1>Not authorised</h1>
+<p>
+    Your account does not hold the role this page requires. Roles are assigned in Microsoft Entra
+    ID; ask a platform administrator if you believe this is wrong.
+</p>

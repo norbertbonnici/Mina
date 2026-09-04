@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Identity.Web;
 
@@ -41,6 +42,16 @@ public static class ManagementUiAuthentication
 
         services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
             .AddMicrosoftIdentityWebApp(configuration.GetSection("AzureAd"));
+
+        // Static server-side rendering (this app's only rendering mode) enforces [Authorize] via
+        // the plain ASP.NET Core authentication pipeline, not Blazor's own AuthorizeRouteView --
+        // that means a denied request never reaches Routes.razor's <NotAuthorized> fragment, it
+        // goes through the cookie handler's AccessDeniedPath instead. Point it at a real page
+        // (default is /Account/AccessDenied, which this app has never mapped) rather than let a
+        // signed-in-but-unauthorized user hit a bare 404.
+        services.Configure<CookieAuthenticationOptions>(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            options => options.AccessDeniedPath = "/access-denied");
 
         return services;
     }
