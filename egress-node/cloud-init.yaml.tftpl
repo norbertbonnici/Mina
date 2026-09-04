@@ -13,8 +13,30 @@
 # M1 lab the certs are provisioned out of band into /etc/mina/tls. The CA private key never reaches
 # the node: it holds its own server certificate and the CA's public certificate only.
 
+# A real, empirically-found bug (2026-09-04, discovered inspecting a live node via
+# `az vmss run-command invoke` -- the first time anything actually checked what cloud-init did on
+# a booted node): write_files below runs in cloud-init's own module order before the groups:/
+# users: sections create mina-tls and mina-sidecar, regardless of where those sections sit in
+# this YAML -- YAML document order does not control cloud-init's internal stage order. Two
+# write_files entries declare an owner of "root:mina-tls"/"root:mina-sidecar"; cloud-init fails
+# resolving the unknown group and appears to abort the *entire* write_files module, not just that
+# one entry -- every file listed after the first failure (install scripts, systemd units,
+# sidecar.env, everything) silently never got created either. This has likely been broken since
+# M1-2's original bootstrap; nothing before now had a way to inspect a live node to notice.
+# bootcmd runs before every other stage, including write_files, so pre-creating just the two
+# groups those two entries need here removes the ordering dependency entirely, without touching
+# how write_files declares ownership.
+bootcmd:
+  - [ groupadd, -f, mina-tls ]
+  - [ groupadd, -f, mina-sidecar ]
+
 packages:
   - nftables
+  # Parses the managed-identity token response mina-install-sidecar.sh gets from IMDS. A proper
+  # JSON parser here rather than a sed/grep regex, since this is extracting a bearer token --
+  # exactly the kind of parsing where a silent format-change breakage should fail loudly, not
+  # match something unintended.
+  - jq
 
 groups:
   - mina-tls
@@ -133,9 +155,11 @@ write_files:
       # binary here is the same supply-chain case as an unverified Envoy (THREAT_MODEL N7).
       #
       # Built by scripts/publish-sidecar.sh (M4-29 item 1), not downloaded from a third party --
-      # unlike Envoy there is no stable public release to template a URL from, so the fetch
-      # location itself is a plain variable rather than a version-derived pattern. Where that
-      # location actually is has not been decided yet; see sidecar_artifact_url's own comment.
+      # unlike Envoy there is no stable public release to template a URL from. Hosted in a
+      # private Azure Storage container (M4-29, done 2026-09-04): the node authenticates with its
+      # own managed identity through IMDS, the same mechanism mina-fetch-certs.sh sketches for
+      # Key Vault (M2-2c). No SAS token, no key -- ARCHITECTURE §4's "no client secrets anywhere
+      # in the product" applies to fetching this binary exactly as it does everywhere else.
       set -euo pipefail
 
       version="${sidecar_version}"
@@ -151,10 +175,29 @@ write_files:
         exit 0
       fi
 
+      # https://storage.azure.com/ is Azure Storage's own fixed resource identifier for IMDS
+      # token requests -- the same for every storage account in every tenant, not something this
+      # environment's tfvars need to supply.
+      token_response="$(curl -fsSL -H "Metadata:true" \
+        "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fstorage.azure.com%2F")"
+      token="$(echo "$${token_response}" | jq -r '.access_token')"
+      if [ -z "$${token}" ] || [ "$${token}" = "null" ]; then
+        echo "could not acquire a managed-identity token for Azure Storage -- is this VMSS's identity actually granted anything?" >&2
+        exit 1
+      fi
+
       tmp="$(mktemp)"
       trap 'rm -f "$${tmp}"' EXIT
 
-      curl -fsSL --retry 3 --retry-delay 5 -o "$${tmp}" "$${url}"
+      # x-ms-version is required on every authenticated Azure Storage REST call; omitting it
+      # either defaults to a very old API version or is rejected outright, depending on the
+      # account's configuration. Verified against the real account this points at, not assumed:
+      # this exact header shape (Bearer token + x-ms-version, no other Azure-specific headers)
+      # was tested with a real GET against stminadevartifacts before this script was written.
+      curl -fsSL --retry 3 --retry-delay 5 \
+        -H "Authorization: Bearer $${token}" \
+        -H "x-ms-version: 2021-08-06" \
+        -o "$${tmp}" "$${url}"
 
       actual="$(sha256sum "$${tmp}" | cut -d' ' -f1)"
       if [ "$${actual}" != "$${expected}" ]; then
@@ -211,14 +254,7 @@ write_files:
     permissions: "0640"
     owner: "root:mina-sidecar"
     content: |
-      Mina__Sidecar__Region=${sidecar_region}
-      Mina__Sidecar__ControlPlaneBaseAddress=${control_plane_url}
-      Mina__Sidecar__AccessLogPath=/var/log/mina/envoy-access.log
-      Mina__Sidecar__AuthzSocketPath=/run/mina-sidecar/authz.sock
-      %{ if sidecar_managed_identity_scope != "" ~}
-      Mina__Sidecar__ManagedIdentityScope=${sidecar_managed_identity_scope}
-      %{ endif ~}
-      DOTNET_gcServer=0
+      ${indent(6, sidecar_env)}
 
   # Only reached at all when sidecar_managed_identity_scope above is unset -- with a real scope
   # configured the sidecar uses the VMSS's own managed identity instead (M4-29 item 2, done) and

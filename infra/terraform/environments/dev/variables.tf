@@ -119,13 +119,21 @@ variable "sidecar_artifact_url" {
   description = <<-EOT
     HTTPS URL the node downloads the published sidecar binary from. Unlike Envoy (a public,
     third-party GitHub release with a stable URL pattern to template a version into), this is
-    Mina's own build output from scripts/publish-sidecar.sh, and where that output actually gets
-    hosted for a booting node to reach is not decided yet (M4-29 items 2/3 -- managed-identity
-    auth for the node -- are the natural place that decision lands, since the same IMDS-token
-    mechanism could authenticate the artifact fetch too). Defaults to "" (not set): the install
-    script treats an empty URL as "no publish pipeline wired up for this environment yet" and
-    skips cleanly rather than failing the whole boot, the same way an empty node-token below
-    makes the sidecar itself refuse to start rather than block Envoy from coming up.
+    Mina's own build output from scripts/publish-sidecar.sh -- hosted in this environment's own
+    private Azure Storage container (node-artifacts.tf's sidecar_builds container), fetched by
+    the node's managed identity through IMDS, the same mechanism mina-fetch-certs.sh sketches for
+    Key Vault. Not a SAS token or a public container on purpose: a SAS has an expiry that would
+    silently break a reimaged or later-added instance, and this is a real binary a node's own
+    supply chain depends on (THREAT_MODEL N7), not something to leave unauthenticated.
+
+    Defaults to "" (not set): the install script treats an empty URL as "no artifact published
+    for this environment yet" and skips cleanly rather than failing the whole boot, the same way
+    an empty node-token below makes the sidecar itself refuse to start rather than block Envoy
+    from coming up. Publishing a new build means: run scripts/publish-sidecar.sh, upload the
+    result to the sidecar_builds container (`az storage blob upload --auth-mode login`, requires
+    the Storage Blob Data Contributor role node-artifacts.tf grants the deploying principal), and
+    update this variable together with sidecar_version/sidecar_sha256 to match -- the URL itself
+    is a stable, overwritten-in-place blob path, so only the checksum actually changes per build.
   EOT
   type        = string
   default     = ""

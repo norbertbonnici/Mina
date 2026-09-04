@@ -498,7 +498,20 @@ Grant-MinaAcl '$deployPathLiteral' '(OI)(CI)(RX)'
         "ConnectionStrings__MinaDb"                  = $SqlConnectionString
     }
     if ($AzureAdTenantId) { $envVars["AzureAd__TenantId"] = $AzureAdTenantId }
-    if ($AzureAdClientId) { $envVars["AzureAd__ClientId"] = $AzureAdClientId }
+    if ($AzureAdClientId) {
+        $envVars["AzureAd__ClientId"] = $AzureAdClientId
+        # Microsoft.Identity.Web needs this set explicitly for this tenant: the Mina app
+        # registration has no identifierUris (never configured during M2-1), so there is no
+        # "api://..." URI for it to derive a valid audience from automatically, and without an
+        # explicit Audience its computed ValidAudiences list is empty -- every real bearer token
+        # is then rejected with "The audience '(null)' is invalid" regardless of how correct the
+        # token itself is. Found and fixed live 2026-09-04 debugging M4-29's first-ever real
+        # token round trip (the node's own managed-identity token, audience-checked against this
+        # API for the first time this project has existed); Audience always equals ClientId for
+        # this app's current configuration, so it is derived here rather than a separate
+        # parameter that could silently drift from it.
+        $envVars["AzureAd__Audience"] = $AzureAdClientId
+    }
     if ($RequiredAuthContextId) { $envVars["Mina__Session__RequiredAuthContextId"] = $RequiredAuthContextId }
     # Sent via stdin (Invoke-GuestPSStdin), not interpolated into the script text, specifically so
     # a connection string or key path containing a quote or backtick can't break out of the
