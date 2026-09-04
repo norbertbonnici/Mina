@@ -243,3 +243,48 @@ which is safe to do at any time, because no egress node currently holds a trust 
 (`mina-dev-cp-app`) — `KeyGet` then `SecretGet` in the vault's diagnostics, no credential stored on
 the host. D-18's "reached outbound from the Arc-enabled control-plane hosts using their Arc managed
 identity" is, from this point, something the platform does rather than something it intends.
+
+## D-21: no third-party CI on administration hosts (THREAT_MODEL B10, M4-30)
+
+B10 records that an administration host sits inside every plane at once — the SSH key that is
+`root` on the Proxmox host and `mina-admin` on the control-plane VMs, an authenticated Azure
+session for the subscription holding the CA signing key and the audit anchors, and the Terraform
+state credentials. M4-30 found the first concrete consequence: two self-hosted GitHub Actions
+runners for unrelated repositories were running on that host, and the runner installer grants its
+service account FullControl over the administrator's entire profile. A workflow change in a
+repository with no relationship to this platform could have read the hypervisor root key and live
+Azure tokens for the subscription that holds the CA key.
+
+**Decision (2026-09-04): administration hosts do not run third-party CI.**
+
+- **"Administration host"** means any machine holding credentials for a Mina plane: an SSH key or
+  console access to the Proxmox host or the control-plane VMs, an authenticated Azure session for
+  the subscription holding Key Vault or the audit storage account, or the Terraform state
+  credentials. It is a property of what the machine holds, not of who owns it or what it is called.
+- **"Third-party CI"** means any build or automation agent acting for a repository or system other
+  than Mina — self-hosted runners, build agents, scheduled deployment workers. The objection is not
+  to the other project; it is that such an agent executes code authored elsewhere, changeable by
+  anyone with commit rights there, under an identity the platform's credentials are reachable from.
+- **The mechanism is the point, not the intent.** Nobody granted that runner access to the SSH key.
+  The installer created a local group, put its service account in it, and granted the group
+  FullControl over the profile — ordinary, documented behaviour that becomes a credential
+  compromise only because of what else lives in that profile. Controls that depend on nobody
+  installing anything with reasonable defaults are not controls.
+- **Detection cannot be relied on here.** This surfaced only because OpenSSH refuses a key with
+  loose permissions and says so out loud. Nothing checks the Azure token store, so that half of the
+  exposure would not have announced itself at all.
+
+**What this does not decide.** Whether *Mina's own* CI may run on an administration host. The
+technical exposure is identical — an agent executing repository-authored code beside the platform's
+credentials — and the same reasoning points the same way, but the owner's decision as taken was
+about third-party CI, and this register records decisions rather than extending them. Mina's CI
+uses GitHub-hosted runners today, so nothing depends on answering it now. Also undecided: whether
+administration credentials should live on a general-purpose workstation at all, or on a dedicated
+privileged-access host — B10's elevation bullet remains unmitigated either way.
+
+**State at the time of the decision:** the one known instance is remediated (M4-30) — the
+in-profile runner relocated to its own directory, the profile-root grant removed, and `.ssh`
+restricted to owner/SYSTEM/Administrators, verified with both runners still online. The second
+runner remains on the host in its own directory outside the profile, which this decision requires
+to be moved off the host entirely; that is M4-30's remaining work, not something the remediation
+already achieved.

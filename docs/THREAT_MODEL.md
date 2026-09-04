@@ -141,9 +141,13 @@ host an administrator actually uses, in the lab today and in FIAU operations lat
 
 - **E:** code executing as the administrator inherits hypervisor, control-plane and subscription
   authority in a single step — it does not cross the boundaries above, it starts inside all of
-  them. *Mitigate:* general endpoint hygiene only. There is no platform-specific control today,
-  and saying so plainly is the point of this entry. *Test:* none; M4-30 carries the decision on
-  what separation to require.
+  them. *Mitigate:* D-21 removes one class of foreign code from the host, which is narrower than
+  it sounds — it says what may not run there, not that what remains is contained. For the general
+  case there is still no platform-specific control beyond ordinary endpoint hygiene, and saying so
+  plainly is the point of this entry. *Test:* none for the general case; D-21 compliance is
+  checkable, an administrator's own session is not. Whether these credentials belong on a
+  general-purpose workstation at all, rather than a dedicated privileged-access host, is open
+  (M4-30).
 - **T:** the same session applies Terraform and runs the CA bootstrap tool, so it can both change
   infrastructure and, holding Secrets Officer on the vault, re-root the internal CA. D-20 stops the
   *API* from re-rooting the platform; it does not constrain the operator, and was never intended
@@ -156,9 +160,13 @@ host an administrator actually uses, in the lab today and in FIAU operations lat
   Mina could read the hypervisor root key and live Azure tokens for this platform's subscription.
   Found and fixed 2026-09-04 (M4-30): runner relocated out of the profile, profile grant removed,
   key ACL tightened. Note it surfaced only because OpenSSH refuses a key with loose permissions —
-  nothing checks the token store, so that half would not have announced itself. *Mitigate:* keep
-  third-party CI off administration hosts, or hold platform credentials somewhere CI cannot reach.
-  *Test:* assert no principal outside owner/SYSTEM/Administrators can read the credential stores.
+  nothing checks the token store, so that half would not have announced itself. *Mitigate:*
+  **D-21 (2026-09-04) — administration hosts do not run third-party CI**, where an administration
+  host is defined by the credentials it holds rather than by who owns it. The mechanism matters
+  more than the intent: nobody granted that runner access to the key, the installer's own default
+  did, so a control that assumes nothing is installed with reasonable defaults is not a control.
+  *Test:* assert no principal outside owner/SYSTEM/Administrators can read the credential stores,
+  and that no CI agent for another system is installed on the host.
 - **R:** actions taken here appear as the administrator or the host's Arc identity, so attribution
   reaches a role and a machine rather than a person. *Mitigate:* audit anchors are in write-once
   Azure storage (D-18), so even this principal cannot rewrite history undetectably; ARM-level
