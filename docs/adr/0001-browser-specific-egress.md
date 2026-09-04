@@ -185,7 +185,7 @@ about enrolment, compliance or policy delivery still needs a real managed Window
    address as loopback and exempts it from outbound filtering, so a canary listening on the
    test machine is reached even by a comprehensively blocked process. On-box canaries make
    every case pass. This applies to the M1-6 leak suites too — point them off-box.
-2. 🟡 Edge channels share the policy registry location; flag-based hardening holds for a spawned
+2. ✅ Edge channels share the policy registry location; flag-based hardening holds for a spawned
    instance. **Constraint confirmed 2026-09-04** by
    `tests/security/windows-enforcement/Invoke-PolicyScopeVerification.ps1`. A single
    `HKLM\SOFTWARE\Policies\Microsoft\Edge` fixed-proxy policy pointed at a dead local port took
@@ -201,13 +201,30 @@ about enrolment, compliance or policy delivery still needs a real managed Window
    `ProxyMode` + `ProxyServer` pair is documented as **deprecated** but was verified still
    honoured by Edge 152/153 — the current form was tested precisely so shipping configuration
    need not rest on a deprecated name.
-   *Remaining:* the QUIC, DoH and WebRTC names are **not pinned**. Documented candidates are
-   `QuicAllowed` (DWORD), `DnsOverHttpsMode` (REG_SZ: off/automatic/secure) with
-   `BuiltInDnsClientEnabled` (DWORD), `WebRtcLocalhostIpHandling` (REG_SZ, values including
-   `disable_non_proxied_udp`) and `NetworkPredictionOptions` (DWORD, 0 to disable prefetch, for
-   THREAT_MODEL N12) — but each needs its own observation to confirm the name is real and takes
-   effect (an HTTP/3 origin, DNS capture, an ICE harness), which lands with items 4 and 5. Do
-   not write these into `edge-integration/` as settled until then.
+   **QUIC and DoH pinned 2026-09-04** by
+   `tests/security/windows-enforcement/Invoke-QuicDohVerification.ps1`, each made deterministic
+   and aimed at an address nothing else talks to:
+   - `QuicAllowed` **= 0** (DWORD). With `--origin-to-force-quic-on` making a QUIC attempt happen
+     on demand, UDP went 12 → **0** → 12 as the policy was applied and removed. The policy beat an
+     explicit command-line instruction to use QUIC, which is a stronger result than suppressing
+     an opportunistic upgrade.
+   - `DnsOverHttpsMode` **= off** (REG_SZ) with `DnsOverHttpsTemplates` (REG_SZ). Pointing the
+     template at a resolver we watch, the browser sent 364 packets to it on `secure` and **0** on
+     `off`, against a silent idle control.
+   - `BuiltInDnsClientEnabled` **= 0 does NOT suppress DoH** — 367 packets, indistinguishable
+     from the baseline. Whether the name is unhonoured or simply does not gate DoH on this build
+     is not isolated, and does not matter for the decision: **do not rely on it**, use
+     `DnsOverHttpsMode`. Recorded because it is a documented candidate that a reader would
+     otherwise reasonably reach for.
+   *Method note:* TCP/443 toward the test host is **not** a clean channel — an idle control with
+   no browser running transmitted ~20 packets in 10 s. The first DoH run inherited that noise and
+   read as "`DnsOverHttpsMode` not honoured", the exact opposite of the truth. Moving the DoH
+   probe to an unused port and adding a no-browser idle control as case D0 fixed it. Any future
+   case on this harness wants that control before its numbers mean anything.
+   *Remaining:* `NetworkPredictionOptions` (DWORD, 0 to disable prefetch — THREAT_MODEL N12) is
+   still an unpinned documented candidate, and belongs with the ADR-0007 decision on which
+   background services the research profile disables. Everything else item 2 asked for is pinned;
+   these names may now be written into `edge-integration/`.
 3. 🟡 Fixed-proxy fail-closed behaviour (no DIRECT fallback). *Agent-side* fail-closed is proven
    in `tests/integration` (tunnel loss ⇒ HTTP 502, never a direct path). **The Edge side is now
    evidenced too, 2026-09-04** by the item 2 run above: with a fixed proxy that nothing was
