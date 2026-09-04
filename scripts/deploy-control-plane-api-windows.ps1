@@ -64,6 +64,23 @@
     itself requires the authentication context and its bound CA policy to exist in the tenant
     first (see scripts/finish-m2-1-conditional-access.sh).
 
+.PARAMETER EgressRegion
+    Region name (e.g. "spaincentral") whose Mina:Egress:Regions:<name> config this deploy sets --
+    the SAN a node's own server certificate gets issued with (M2-2d) comes from here, so a node in
+    a region with no entry gets a 503 refusing the certificate rather than one naming nothing.
+    Requires -EgressHost and -EgressServerName too; omit all three to leave whatever region config
+    is already on the host untouched.
+
+.PARAMETER EgressHost
+    The region's ingress address (e.g. the stamp's public IP, `terraform output ingress_public_ip`).
+
+.PARAMETER EgressServerName
+    TLS SNI / expected server name for this region's egress (matches the endpoint agent's own
+    EgressEndpoint.ServerName) -- what goes in the node's server-certificate SAN.
+
+.PARAMETER EgressPort
+    The region's ingress port. Default 443.
+
 .PARAMETER NodePort
     Port for the internet-published, node-facing listener. Default 8443.
 
@@ -137,6 +154,26 @@ param(
     [ValidatePattern('^https://[a-z0-9-]{3,24}\.vault\.azure\.net/?$')]
     [string]$CaKeyVaultUri,
 
+    # A node's server-certificate SAN and this API's session-issuance ingress are one region's
+    # worth of Mina:Egress:Regions:<name> config -- there is no parameter for it because there was
+    # no caller until M2-2d's node certificate endpoint (POST /api/nodes/{region}/certificate)
+    # needed a ServerName to put in the SAN, and appsettings.json's checked-in placeholder only
+    # ever covered westeurope. All three go together: set none for this deploy to leave whatever
+    # region config is already on the host untouched (the whole environmentVariables block is
+    # rebuilt from this script's own $envVars every run, so a manual web.config edit for this
+    # would be silently lost on the next deploy -- this is the durable place for it).
+    [ValidatePattern('^[a-z]+[a-z0-9]*$')]
+    [string]$EgressRegion,
+
+    [ValidatePattern('^(\d{1,3}\.){3}\d{1,3}$')]
+    [string]$EgressHost,
+
+    [ValidatePattern('^[a-z0-9.-]{1,253}$')]
+    [string]$EgressServerName,
+
+    [ValidateRange(1, 65535)]
+    [int]$EgressPort = 443,
+
     [ValidateRange(1, 65535)]
     [int]$NodePort = 8443,
 
@@ -161,6 +198,11 @@ $ErrorActionPreference = "Stop"
 
 if ($NodePort -eq $ManagementPort) {
     throw "NodePort and ManagementPort must differ -- one port would publish the management surface to the internet."
+}
+
+$egressParamsSet = @($EgressRegion, $EgressHost, $EgressServerName) | Where-Object { $_ }
+if ($egressParamsSet.Count -gt 0 -and $egressParamsSet.Count -lt 3) {
+    throw "EgressRegion, EgressHost and EgressServerName go together -- set all three or none."
 }
 
 if (-not $env:PROXMOX_VE_ENDPOINT -or -not $env:PROXMOX_VE_API_TOKEN) {
@@ -528,6 +570,11 @@ Grant-MinaAcl '$deployPathLiteral' '(OI)(CI)(RX)'
     # No credential accompanies this: DefaultAzureCredential on the guest finds the Arc agent's
     # managed identity, the same way the SQL connection string's Active Directory Default does.
     if ($CaKeyVaultUri) { $envVars["Mina__Pki__KeyVaultUri"] = $CaKeyVaultUri }
+    if ($EgressRegion) {
+        $envVars["Mina__Egress__Regions__${EgressRegion}__Host"] = $EgressHost
+        $envVars["Mina__Egress__Regions__${EgressRegion}__Port"] = "$EgressPort"
+        $envVars["Mina__Egress__Regions__${EgressRegion}__ServerName"] = $EgressServerName
+    }
     # Sent via stdin (Invoke-GuestPSStdin), not interpolated into the script text, specifically so
     # a connection string or key path containing a quote or backtick can't break out of the
     # generated PowerShell -- JSON-encode here, JSON-decode on the guest.
