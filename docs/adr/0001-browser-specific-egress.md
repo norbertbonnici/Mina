@@ -24,7 +24,8 @@ be re-confirmed by prototype before the decision is finalised.
    (WFP) application conditions and the Windows per-app VPN traffic filters identify an
    application by its image path only — not by command line, profile, or window. A research
    *profile* and ordinary Edge are the same `msedge.exe`, so no network-layer mechanism can
-   distinguish two profiles of the same Edge installation. **[V]**
+   distinguish two profiles of the same Edge installation. **[V — confirmed 2026-09-04, see
+   register item 1]**
 2. **Chromium enterprise policies are instance-global.** Edge reads policy from a single
    machine/user registry location; a second `--user-data-dir` instance receives the same
    policies. Proxy/WebRTC/QUIC policies set for the research context would also apply to the
@@ -158,10 +159,31 @@ detective controls, or escalate C3 as a requirements change.
 
 ## Verification register (Phase 1 gate)
 
-Status keys: ⬜ not started · 🟡 partially evidenced · ✅ evidenced. Windows items need a
-Windows 11 lab machine (not yet available); transport items are proven on the dev machine.
+Status keys: ⬜ not started · 🟡 partially evidenced · ✅ evidenced. Transport items are proven
+on the dev machine. Windows items were blocked on a Windows 11 lab machine until 2026-09-04,
+when item 1 was evidenced on the admin workstation (Windows Server 2025, build 26100 — the same
+kernel and WFP stack as Windows 11 24H2). That substitution is sound for identification
+behaviour but not for the Intune/managed-client half: anything about enrolment, compliance or
+policy delivery still needs a real managed Windows 11 client.
 
-1. ⬜ WFP/per-app identification is image-path-only; C2 rules behave as designed on Win 11 24H2+.
+1. ✅ WFP/per-app identification is image-path-only. **Evidenced 2026-09-04** by
+   `tests/security/windows-enforcement/Invoke-C2Verification.ps1`, run against Edge Stable
+   152.0.4191.62 and Edge Beta 153.0.4234.19 installed at distinct image paths. With an
+   outbound block rule scoped to Stable's image path, egress measured at the NIC (pktmon
+   counters, off-box target) was: baseline Stable 24 packets; Stable same profile 0; Stable
+   **a different `--user-data-dir` profile** 0; **Edge Beta** 30. So a second profile of the
+   same binary is caught by a rule aimed at that binary — profiles are not separable, and C1
+   cannot be enforced at the network layer — while a different image path is untouched, so C2
+   can be. Reproducible: the script prints a verdict and refuses to pass on an inconclusive
+   baseline.
+   *Remaining:* this used Windows Firewall rules, a WFP consumer that keys on the same image
+   path, rather than the `FwpmFilterAdd` filters the shipping agent installs; the agent's own
+   filters and their tamper resistance against a local administrator are M2-4, and "C2 rules
+   behave as designed" end-to-end still wants a managed Windows 11 client.
+   *Method note that cost a false pass first time:* Windows treats traffic to the host's own
+   address as loopback and exempts it from outbound filtering, so a canary listening on the
+   test machine is reached even by a comprehensively blocked process. On-box canaries make
+   every case pass. This applies to the M1-6 leak suites too — point them off-box.
 2. ⬜ Edge channels share the policy registry location; flag-based hardening holds for a spawned
    instance (`--proxy-server`, WebRTC IP-handling, QUIC and DoH disablement flags — exact flag
    and policy names to be pinned).
