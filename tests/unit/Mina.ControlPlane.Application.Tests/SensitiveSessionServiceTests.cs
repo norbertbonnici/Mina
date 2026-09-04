@@ -282,10 +282,13 @@ public class SensitiveSessionServiceTests
         await h.Service.ApproveAsync(h.Approver, request.RequestId, TimeSpan.FromHours(2), default);
         await h.Service.ActivateAsync(h.Analyst, request.RequestId, default);
 
-        // Past the approval window AND past the 8-hour session lease. Nothing sweeps lapsed leases
-        // (M4-12), so the session row still reads State = Active — but it has been unusable for
-        // hours. Revoking it now would write a session_revoked event for an action that changed
-        // nothing real.
+        // Past the approval window AND past the 8-hour session lease. This harness does not run
+        // M4-12's own sweeper (it is testing SensitiveSessionService in isolation), so the session
+        // row still reads State = Active here the way it would in the up-to-5-minute window before
+        // that sweeper next runs in production — and this service must not depend on the sweeper
+        // having already caught it: it reads IsUsableAt directly rather than State == Active (D-06a),
+        // so revoking here would write a session_revoked event for an action that changed nothing
+        // real.
         h.Clock.Advance(TimeSpan.FromHours(9));
         Assert.Equal(1, await h.ExpireDueAsync());
 

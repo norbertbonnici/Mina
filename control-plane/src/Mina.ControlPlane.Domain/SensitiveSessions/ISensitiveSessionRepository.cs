@@ -16,9 +16,10 @@ public interface ISensitiveSessionRepository
     /// <summary>
     /// Requests awaiting an approval decision, oldest first — the approver's queue. Bounded,
     /// because an analyst can lengthen it at will and an unbounded read of it is a query whose size
-    /// an ordinary user controls. It is not the only one: the active-session set behind
-    /// <c>ISessionQueries.ListActiveAsync</c> is also analyst-driven and still unbounded, and grows
-    /// without limit while nothing sweeps lapsed leases (backlog M4-12).
+    /// an ordinary user controls. <c>ISessionQueries.ListActiveAsync</c> is the same shape of read —
+    /// also analyst-driven, still unpaged — but not the same risk: M4-12's lease sweeper now closes
+    /// a session within 5 minutes of its lease lapsing, so the active set it reads is bounded by
+    /// concurrent legitimate usage rather than able to grow without limit the way this queue can.
     /// </summary>
     /// <param name="limit">
     /// Maximum requests to return. Implementations read one more than this so the caller can tell
