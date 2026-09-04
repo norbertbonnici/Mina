@@ -161,7 +161,7 @@ detective controls, or escalate C3 as a requirements change.
 
 Status keys: ⬜ not started · 🟡 partially evidenced · ✅ evidenced. Transport items are proven
 on the dev machine. Windows items were blocked on a Windows 11 lab machine until 2026-09-04,
-when items 1, 2 and 4 — and the Edge half of item 3 — were evidenced on the admin workstation
+when items 1, 2, 4 and 5 — and the Edge half of item 3 — were evidenced on the admin workstation
 (Windows Server 2025, build 26100 — the same kernel and WFP stack as Windows 11 24H2, with Edge
 Stable 152 and Edge Beta 153 installed at distinct image paths). That substitution is sound for
 identification and policy-scope behaviour but not for the Intune/managed-client half: anything
@@ -231,6 +231,9 @@ about enrolment, compliance or policy delivery still needs a real managed Window
    - **rule applied 2 s after spawn:** 6 packets and **12 endpoints** already gone. The ordering
      requirement is real, which is what makes the middle case worth anything — a rule only ever
      installed first proves nothing about whether installing it first matters.
+   The endpoint counts vary run to run with whatever the browser decides to contact — a later
+   run saw 7 and 6 rather than 9 and 12. The zero is the stable, load-bearing result; the
+   non-zero figures are illustrative of scale, not fixed measurements.
    This is why ARCHITECTURE §3.1 has the rules persist whenever the agent is installed rather
    than being raised per session: the safe window is "always", and a two-second gap is enough to
    disclose the organisation's ordinary egress IP to a dozen endpoints.
@@ -248,7 +251,41 @@ about enrolment, compliance or policy delivery still needs a real managed Window
    rule. Filters added directly through the WFP API are not automatically so forgiving — an ALE
    filter can block loopback — so the agent's own rule set must permit that path explicitly
    rather than inheriting this behaviour. This test cannot surface that.
-5. ⬜ WebRTC leak harness passes with the chosen flag/policy set.
+5. ✅ WebRTC leak harness passes with the chosen flag/policy set. **Evidenced 2026-09-04** by
+   `tests/security/windows-enforcement/Invoke-WebRtcLeakVerification.ps1` driving
+   `tests/security/canaries/webrtc-harness.html` (TEST_STRATEGY §2's harness page, built here).
+   ICE is offered a STUN server on an off-box address nothing listens on; the measurement is the
+   UDP that leaves, since against a real STUN server those same packets would return the public
+   egress address. Edge Beta 153, counts as transmitted/dropped:
+   - **no proxy, no hardening:** 6 transmitted — ICE does emit UDP.
+   - **fixed proxy, no hardening:** 6 transmitted. **WebRTC bypasses the proxy**, confirming
+     constraint 5. This is the finding that matters: the fixed proxy is the control the
+     fail-closed design leans on, and it does nothing whatsoever about WebRTC.
+   - **proxy + `--webrtc-ip-handling-policy=disable_non_proxied_udp`:** 0 transmitted, 0 dropped,
+     **0 candidates** — suppressed at source, no socket ever created.
+   - **proxy + policy `WebRtcLocalhostIpHandling=disable_non_proxied_udp` (REG_SZ):** identical.
+     This **pins the policy name behaviourally**, which item 2 could only list as a documented
+     candidate.
+   - **C2 image-path block, no browser flags:** 0 transmitted but **6 dropped**, and a candidate
+     still gathered — the browser tried and the network layer caught it.
+   The last two rows are the defence-in-depth story stated precisely: the flag or policy stops
+   the attempt being made, and the image-path rule stops it landing if the flag is absent,
+   stripped or ignored (THREAT_MODEL B1, an analyst stripping launch flags).
+   *What an adversary site learns (AC-007):* on this build the single host candidate is
+   mDNS-obfuscated (`<uuid>.local`) with **no literal address**, so candidate content is not
+   where the leak shows up — the UDP egress is. Do not read "mDNS obfuscation is on by default"
+   as WebRTC being safe by default; the packets still leave.
+   *Measurement note, because it produced a false result first:* pktmon's counter rows carry a
+   Counter column (`Upper`/`Lower`/`Drops`), and reading Tx without it reports **dropped packets
+   as sent** — which turned the image-path case into an apparent "enforcement gap" until the
+   per-component output was inspected. Invisible for TCP, where a blocked `connect()` yields no
+   packet at all; decisive for UDP, where `sendto()` produces one that is then dropped. The
+   module now separates the two, and reports drops as evidence in their own right: silence alone
+   cannot distinguish "blocked" from "never ran".
+   *Remaining:* headless, as with item 4. QUIC is untouched — constraint 5 names it alongside
+   WebRTC and `QuicAllowed` is still an unpinned documented candidate. No real STUN server was
+   used, so the public-address disclosure is inferred from the egress rather than observed
+   returning. AC-007 as a whole still wants the M1-6 suite against a live stamp.
 6. 🟡 Envoy CONNECT termination + mTLS client-cert authorisation. **Functionally evidenced**
    2026-08-31: the real .NET agent tunnels through a real Envoy 1.39.1 running the committed
    config, mTLS client-cert enforced, hostname telemetry emitted (interop test + config

@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mina WebRTC leak harness</title>
+<!--
+  TEST_STRATEGY §2's WebRTC harness page: gathers ICE candidates and reports what an adversary
+  site would learn (AC-007). Served over loopback by the verification script, which also receives
+  the report, so no external service is involved and the page stays reachable even when the
+  browser is comprehensively blocked at the network layer.
+
+  Query parameters:
+    tag   correlates this run with the case the harness is executing
+    stun  host:port of a STUN server to offer ICE. The verification script points this at an
+          address nothing listens on, deliberately: the measurement is the UDP that LEAVES the
+          machine, not a completed round trip. Against a real STUN server those same packets
+          would have come back carrying the public egress address, which is the actual leak.
+
+  The page always reports, even when gathering never completes -- a browser that emits nothing
+  must be distinguishable from a page that simply hung.
+-->
+<body>
+<pre id="out">gathering…</pre>
+<script>
+  const params = new URLSearchParams(location.search);
+  const tag = params.get('tag') || 'untagged';
+  const stun = params.get('stun');
+
+  const candidates = [];
+  let reported = false;
+
+  function report(reason) {
+    if (reported) return;
+    reported = true;
+    const payload = {
+      tag: tag,
+      reason: reason,
+      candidateCount: candidates.length,
+      candidates: candidates,
+      // Chromium obfuscates host candidates behind mDNS .local names by default; record whether
+      // anything looks like a literal address so the report distinguishes "obfuscated" from
+      // "nothing gathered at all".
+      literalAddresses: candidates
+        .map(c => (c.match(/ (\d+\.\d+\.\d+\.\d+) /) || [])[1])
+        .filter(Boolean)
+    };
+    document.getElementById('out').textContent = JSON.stringify(payload, null, 2);
+    fetch('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+  }
+
+  try {
+    const config = stun ? { iceServers: [{ urls: 'stun:' + stun }] } : { iceServers: [] };
+    const pc = new RTCPeerConnection(config);
+
+    pc.onicecandidate = e => {
+      if (e.candidate && e.candidate.candidate) {
+        candidates.push(e.candidate.candidate);
+      } else if (!e.candidate) {
+        report('gathering-complete');
+      }
+    };
+
+    // A data channel is enough to make the connection gather candidates; no media permissions
+    // are needed, which matters because this must run unattended.
+    pc.createDataChannel('mina-probe');
+    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(err => report('offer-failed: ' + err));
+  } catch (err) {
+    report('peerconnection-unavailable: ' + err);
+  }
+
+  // Backstop: ICE gathering can stall indefinitely when every candidate path is blocked, which
+  // is precisely the state under test.
+  setTimeout(() => report('timeout'), 9000);
+</script>
+</body>

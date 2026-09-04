@@ -50,21 +50,65 @@ function Stop-ProcessTree {
     Invoke-Quietly { & taskkill.exe /PID $ProcessId /T /F | Out-Null }
 }
 
-function Get-TxPacketCount {
+function Get-PktmonTxCounters {
     <#
     .SYNOPSIS
-        Highest Tx packet count across the components pktmon reports; 0 when nothing left the NIC.
+        Splits pktmon's Tx counters into packets that were transmitted and packets that were
+        dropped before transmission.
+    .DESCRIPTION
+        pktmon reports one row per component, and the Counter column says which kind of row it
+        is: Upper/Lower are packets moving through that component, Drops are packets discarded
+        there. Both carry a Tx number, so reading Tx without reading the Counter column reports
+        dropped packets as sent.
+
+        That distinction is invisible for TCP -- a connect() refused by a filter never produces
+        a packet at all, so a blocked case simply reports nothing. It is decisive for UDP, where
+        a connectionless sendto() does produce a packet that the filter then drops: the naive
+        reading turns successful enforcement into an apparent leak. Found 2026-09-04 while
+        verifying register item 5, where it had produced a false "enforcement gap".
+
+        Drops are worth surfacing rather than merely excluding. A drop count proves the
+        application tried and enforcement caught it, which is stronger evidence than silence --
+        silence cannot distinguish "blocked" from "never ran".
+    .OUTPUTS
+        [pscustomobject] with Transmitted and Dropped packet counts.
     #>
     [CmdletBinding()]
     param()
 
-    $text = (Invoke-Quietly { & pktmon.exe counters } | Out-String)
-    $max = 0
-    foreach ($m in [regex]::Matches($text, '\|\s*Tx\s+(\d+)\s+(\d+)')) {
-        $n = [int]$m.Groups[1].Value
-        if ($n -gt $max) { $max = $n }
+    $text        = (Invoke-Quietly { & pktmon.exe counters } | Out-String)
+    $transmitted = 0
+    $dropped     = 0
+
+    # Anchor on the token immediately before "Rx", which is the Counter column. Two details in
+    # pktmon's layout make the obvious patterns wrong, both found the hard way on 2026-09-04:
+    # counts are printed with thousands separators (1,800), so \d+ silently fails to match and
+    # every row reads as zero; and a component's second and later rows repeat neither its Id nor
+    # its Name, so anchoring the line on a leading number drops the "Lower" row entirely.
+    foreach ($line in ($text -split "`r?`n")) {
+        if ($line -match '(\S+)\s+Rx\s+[\d,]+\s+[\d,]+\s*\|\s*Tx\s+([\d,]+)\s+[\d,]+') {
+            $counter = $Matches[1]
+            $tx      = [int]($Matches[2] -replace ',', '')
+            if ($counter -eq 'Drops') {
+                if ($tx -gt $dropped)     { $dropped = $tx }
+            }
+            elseif ($tx -gt $transmitted) { $transmitted = $tx }
+        }
     }
-    return $max
+
+    return [pscustomobject]@{ Transmitted = $transmitted; Dropped = $dropped }
+}
+
+function Get-TxPacketCount {
+    <#
+    .SYNOPSIS
+        Packets that actually left the NIC; 0 when nothing was transmitted. Dropped packets do
+        not count as egress -- see Get-PktmonTxCounters.
+    #>
+    [CmdletBinding()]
+    param()
+
+    return (Get-PktmonTxCounters).Transmitted
 }
 
 function Measure-BrowserEgress {
@@ -128,4 +172,4 @@ function Clear-ProbeCapture {
 }
 
 Export-ModuleMember -Function Invoke-Quietly, Stop-ProcessTree, Get-TxPacketCount,
-                              Measure-BrowserEgress, Clear-ProbeCapture
+                              Get-PktmonTxCounters, Measure-BrowserEgress, Clear-ProbeCapture
