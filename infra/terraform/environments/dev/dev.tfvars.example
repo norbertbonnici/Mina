@@ -6,6 +6,11 @@
 # environment (ARM_SUBSCRIPTION_ID or `az account set`), not by this file.
 tenant_id = "00000000-0000-0000-0000-000000000000"
 
+# The single "Mina" Entra app registration the whole platform validates against (M2-1, created
+# out-of-band -- not by this Terraform). entra-node-roles.tf looks it up by this id to add the
+# node app roles (M4-29 item 3); nothing here creates or owns the application itself.
+mina_app_client_id = "00000000-0000-0000-0000-000000000000"
+
 # --- Egress stamp -------------------------------------------------------------------------
 # D-07 interim: who may reach the dev tunnel ingress (admin workstation / corp egress IPs).
 ingress_allowed_cidrs = ["203.0.113.10/32"]

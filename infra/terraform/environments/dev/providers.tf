@@ -11,3 +11,7 @@ provider "azurerm" {
   # account"), even though every actual resource declaration is already key-auth-free.
   storage_use_azuread = true
 }
+
+# M4-29 item 3. Same tenant as azurerm's own auth context; uses the signed-in Azure CLI session
+# or ARM_* environment variables, whichever azurerm resolved -- no separate credential.
+provider "azuread" {}

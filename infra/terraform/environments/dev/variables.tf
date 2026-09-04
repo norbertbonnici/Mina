@@ -38,6 +38,18 @@ variable "tenant_id" {
   type        = string
 }
 
+variable "mina_app_client_id" {
+  description = <<-EOT
+    Client (application) id of the single "Mina" Entra app registration the whole platform
+    validates against (ARCHITECTURE §4) -- created out-of-band during M2-1, not by Terraform.
+    Used only to look up that existing application/service principal (data sources) so
+    entra-node-roles.tf can add the node app roles to it; this environment never creates or owns
+    the application itself, and nothing here can accidentally modify its sign-in configuration,
+    federated credential, or the three roles M2-1 already defined.
+  EOT
+  type        = string
+}
+
 variable "control_plane_egress_cidrs" {
   description = <<-EOT
     Public source addresses the on-premises control plane reaches Azure from — the FIAU DMZ's
@@ -127,17 +139,26 @@ variable "sidecar_artifact_url" {
 variable "sidecar_managed_identity_scope" {
   description = <<-EOT
     The Entra scope the sidecar requests a token for using the VMSS's own system-assigned managed
-    identity (M4-29 item 2) -- typically "api://<control-plane app registration client id>/.default",
-    since the platform validates every caller (analysts and nodes alike) against one app
-    registration's audience (ARCHITECTURE §4). Defaults to "" (not set): with no scope configured
-    the sidecar falls back to a fixed development token instead, and that fallback itself refuses
-    to start outside Development unless explicitly allowed -- there is no silent path to an
-    unauthenticated node.
+    identity (M4-29 item 2), since the platform validates every caller (analysts and nodes alike)
+    against one app registration's audience (ARCHITECTURE §4). Defaults to "" (not set): with no
+    scope configured the sidecar falls back to a fixed development token instead, and that
+    fallback itself refuses to start outside Development unless explicitly allowed -- there is no
+    silent path to an unauthenticated node.
 
-    Even once this is set, the node still needs the Mina.Node and Mina.Node.<region> app roles
-    actually assigned to its managed identity's service principal before the control plane accepts
-    the resulting token (M4-29 item 3, not yet IaC'd anywhere in this repo) -- setting this
-    variable alone does not make the node authenticate successfully.
+    Shape: "<mina_app_client_id>/.default", the bare client id -- NOT "api://<client id>/.default".
+    Checked directly against this tenant (2026-09-04): the "Mina" app registration's
+    identifierUris is empty, no custom Application ID URI was ever set, so an "api://" scope has
+    nothing to resolve to. A bare client id is always a valid implicit identifier for an app's own
+    app-only permissions regardless of whether identifierUris is populated, and
+    Microsoft.Identity.Web's default audience validation (what the control plane uses) accepts a
+    token whose `aud` is the bare client id -- this is the verified, not assumed, correct form for
+    this specific tenant.
+
+    Even with this set, the node still needs the Mina.Node and Mina.Node.<region> app roles
+    actually assigned to its managed identity's service principal (M4-29 item 3, done 2026-09-04
+    -- entra-node-roles.tf) -- and this variable alone is still not sufficient for a real token
+    round trip: it has not been verified end to end against the live node, which has no SSH/Bastion
+    path in to check from.
   EOT
   type        = string
   default     = ""

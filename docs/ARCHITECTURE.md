@@ -202,11 +202,15 @@ missing connection string now refuses the host rather than selecting an in-memor
 ## 4. Identity and access
 
 - **Entra applications**: one enterprise app for the platform with app roles
-  `Mina.Analyst`, `Mina.Approver`, `Mina.Admin`, group-assigned. Endpoint agent registered as a
-  public client using the WAM broker (silent SSO from the existing Windows session — FR-002);
-  management UI as a confidential client; egress node sidecars use the VMSS managed identity, and
-  the on-premises control-plane hosts use their Azure Arc system-assigned managed identity for
-  SQL Server (D-17), Key Vault and blob storage (D-18) — no client secrets anywhere in the product.
+  `Mina.Analyst`, `Mina.Approver`, `Mina.Admin`, group-assigned, plus `Mina.Node` and
+  `Mina.Node.<region>` per D-08/D-08a region, assigned to each stamp's VMSS managed identity
+  (M4-29 item 3) — a bare `Mina.Node` role is entitled to nothing on its own; the control plane
+  requires both before a node's requests return anything (ADR-0006 constraint 4). Endpoint agent
+  registered as a public client using the WAM broker (silent SSO from the existing Windows
+  session — FR-002); management UI as a confidential client; egress node sidecars use the VMSS
+  managed identity, and the on-premises control-plane hosts use their Azure Arc system-assigned
+  managed identity for SQL Server (D-17), Key Vault and blob storage (D-18) — no client secrets
+  anywhere in the product.
 - **Conditional Access**: policy targeting the Mina app requiring compliant (Intune) device and
   the org's MFA baseline. Device identity/compliance is evaluated at token issuance via the
   WAM/PRT flow; the control plane records the device ID per session (FR-003, SR-007).

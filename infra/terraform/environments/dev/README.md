@@ -17,6 +17,7 @@ Costs sit inside the D-04 envelope (`docs/COST_MODEL.md` §3); deallocate the VM
 |---|---|---|
 | Subscription | `ARM_SUBSCRIPTION_ID` or `az account set` | Dev subscription. |
 | `tenant_id` | `dev.auto.tfvars` | Entra tenant that owns the Key Vault. |
+| `mina_app_client_id` | `dev.auto.tfvars` | Client id of the "Mina" Entra app registration (M2-1, created out-of-band). `entra-node-roles.tf` looks it up by this id to add the node app roles (M4-29 item 3); this Terraform never creates or owns the application itself. |
 | `node_image_version` | `dev.auto.tfvars` | Exact Ubuntu 24.04 version. **No default on purpose** — `latest` would make the same configuration produce different nodes (AC-018). List with `az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all -o table`. |
 | `ingress_allowed_cidrs` | `dev.auto.tfvars` | Who may reach the tunnel ingress (D-07). |
 | `corp_public_cidrs` | `dev.auto.tfvars` | Organisation public ranges nodes must never reach (AC-017). |

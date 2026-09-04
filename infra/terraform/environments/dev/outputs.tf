@@ -32,3 +32,12 @@ output "alerting_enabled" {
   description = "False when no receiver is configured, in which case nothing alerts on the audit anchors."
   value       = module.control_plane_azure.alerting_enabled
 }
+
+output "vmss_principal_id" {
+  description = <<-EOT
+    The egress VMSS's managed-identity object id (one shared principal for the whole scale set).
+    This is the principal M4-29 item 3's Entra app-role assignments (entra-node-roles.tf) target
+    -- surfaced here so it can be checked directly rather than dug out of state.
+  EOT
+  value       = module.egress_stamp.vmss_principal_id
+}
