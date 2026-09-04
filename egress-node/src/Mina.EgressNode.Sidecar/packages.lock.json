@@ -19,6 +19,12 @@
         "resolved": "10.0.11",
         "contentHash": "qDc27iV5ysvH2j2Hf6DwsN1aZl0YU3HNgYUvtFXEhuHrke5awU5cIvCGaaJCkILgML9rQZG+yjM2nbkv+ZqKog=="
       },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[10.0.10, )",
+        "resolved": "10.0.10",
+        "contentHash": "f5VCIE7AJpd5YvzNTeMGVzQIgyE9tX+AreTYwQF+REbu+DZo/2Ae+jNSwhPEYrVz6RRkd7y8ubXjk6Nn6Ka+Cg=="
+      },
       "Google.Protobuf": {
         "type": "Transitive",
         "resolved": "3.31.1",
@@ -137,6 +143,7 @@
           "OpenTelemetry.Instrumentation.Runtime": "[1.18.0, )"
         }
       }
-    }
+    },
+    "net10.0/linux-x64": {}
   }
 }

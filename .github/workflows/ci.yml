@@ -55,6 +55,29 @@ jobs:
           path: TestResults
           retention-days: 30
 
+  # M4-29 item 1: prove the self-contained sidecar publish actually works on every push, the same
+  # way the dotnet job proves the code builds and tests pass. This does NOT publish the artifact
+  # anywhere a booting node can reach it -- upload-artifact is CI evidence (build didn't silently
+  # break, here's the checksum a human can diff), not the production hosting path. Where that
+  # artifact actually gets hosted for sidecar_artifact_url to point at is still an open decision
+  # (see that variable's own comment) — the natural next step is wiring this job's output into
+  # wherever that lands, once it's chosen, not before.
+  sidecar-publish:
+    runs-on: ubuntu-latest
+    needs: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish self-contained sidecar (checksum-verified build)
+        run: ./scripts/publish-sidecar.sh "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-linux-x64
+          path: dist/sidecar/${{ github.sha }}
+          retention-days: 30
+
   terraform:
     runs-on: ubuntu-latest
     steps:

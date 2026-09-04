@@ -123,6 +123,52 @@ write_files:
       install -m 0755 -o root -g root "$${tmp}" /usr/local/bin/envoy
       /usr/local/bin/envoy --version
 
+  - path: /usr/local/sbin/mina-install-sidecar.sh
+    permissions: "0700"
+    owner: "root:root"
+    content: |
+      #!/usr/bin/env bash
+      # Pinned and checksum-verified, the same discipline as mina-install-envoy.sh: the sidecar
+      # decides which sessions get to tunnel at all (M4-11's ext_authz check), so an unverified
+      # binary here is the same supply-chain case as an unverified Envoy (THREAT_MODEL N7).
+      #
+      # Built by scripts/publish-sidecar.sh (M4-29 item 1), not downloaded from a third party --
+      # unlike Envoy there is no stable public release to template a URL from, so the fetch
+      # location itself is a plain variable rather than a version-derived pattern. Where that
+      # location actually is has not been decided yet; see sidecar_artifact_url's own comment.
+      set -euo pipefail
+
+      version="${sidecar_version}"
+      expected="${sidecar_sha256}"
+      url="${sidecar_artifact_url}"
+
+      # Empty is a valid, deliberate "not wired up yet" state (see the sidecar_artifact_url
+      # variable) -- exits clean rather than failing the whole boot over a placeholder. The node
+      # still fails closed: mina-sidecar.service's ExecStartPre finds nothing at
+      # /opt/mina/sidecar and refuses to start, exactly as if this script had never run.
+      if [ -z "$${url}" ]; then
+        echo "sidecar_artifact_url is not set -- skipping sidecar install, node will fail closed"
+        exit 0
+      fi
+
+      tmp="$(mktemp)"
+      trap 'rm -f "$${tmp}"' EXIT
+
+      curl -fsSL --retry 3 --retry-delay 5 -o "$${tmp}" "$${url}"
+
+      actual="$(sha256sum "$${tmp}" | cut -d' ' -f1)"
+      if [ "$${actual}" != "$${expected}" ]; then
+        echo "sidecar checksum mismatch (version $${version}): expected $${expected}, got $${actual}" >&2
+        exit 1
+      fi
+
+      install -d -m 0755 -o root -g root /opt/mina/sidecar
+      install -m 0755 -o root -g root "$${tmp}" /opt/mina/sidecar/Mina.EgressNode.Sidecar
+      # No --version sanity check here unlike Envoy: starting this binary stands up the whole
+      # Worker/Kestrel host (admission socket, hosted services), which is not a safe or meaningful
+      # thing to do mid-bootstrap. mina-sidecar.service's own ExecStartPre already re-checks that
+      # the file this script just installed is present and executable before the unit starts it.
+
   - path: /usr/local/sbin/mina-fetch-certs.sh
     permissions: "0750"
     owner: "root:root"
@@ -195,10 +241,14 @@ write_files:
       # orders Envoy after the socket exists rather than after the process forked.
       Type=notify
       NotifyAccess=main
-      # The binary is not installed by this bootstrap: there is no build pipeline that produces it
-      # yet (BACKLOG M4-27). Until there is, this unit fails here, loudly, and Envoy — which starts
-      # regardless — refuses every tunnel because the admission socket does not exist. That is the
-      # node failing closed, and it is the intended state of a node without a sidecar.
+      # mina-install-sidecar.sh (below, in runcmd) now installs a real published binary here
+      # (M4-29 item 1, done) -- but only once sidecar_artifact_url actually points somewhere a
+      # node can reach; that hosting decision is still open, so this environment's tfvars may
+      # still leave it unset. Either way, an empty node-token (below) makes the sidecar refuse to
+      # start regardless of whether the binary is present (M4-29 items 2/3, not done). Until both
+      # are, this unit fails here, loudly, and Envoy — which starts regardless — refuses every
+      # tunnel because the admission socket does not exist. That is the node failing closed, and
+      # it is the intended state of a node without a working sidecar.
       ExecStartPre=/usr/bin/test -x /opt/mina/sidecar/Mina.EgressNode.Sidecar
       ExecStart=/opt/mina/sidecar/Mina.EgressNode.Sidecar
       EnvironmentFile=/etc/mina/sidecar/sidecar.env
@@ -273,12 +323,16 @@ runcmd:
   # possible without widening the mode.
   - [ install, -d, -m, "2750", -o, mina-envoy, -g, mina-log, /var/log/mina ]
   - [ /usr/local/sbin/mina-install-envoy.sh ]
+  - [ /usr/local/sbin/mina-install-sidecar.sh ]
   - [ systemctl, daemon-reload ]
   - [ systemctl, enable, --now, mina-fetch-certs.service ]
-  # Enabled so it starts when its binary arrives; today it fails at ExecStartPre (see the unit).
-  # "|| true" so the rest of the bootstrap still runs — Envoy must come up to fail closed.
+  # Enabled unconditionally, even when mina-install-sidecar.sh just skipped (no
+  # sidecar_artifact_url set): "|| true" so the rest of the bootstrap still runs regardless of
+  # which way ExecStartPre goes — Envoy must come up either way, to fail closed.
   - [ sh, -c, "systemctl enable --now mina-sidecar.service || true" ]
   - [ systemctl, enable, --now, mina-envoy.service ]
 
-# The Wazuh agent joins here in M3-5. The sidecar's binary is the outstanding piece of this node
-# (BACKLOG M4-27): until it is built and installed, every tunnel is refused.
+# The Wazuh agent joins here in M3-5. M4-29 item 1 (this file's sidecar install step) is done;
+# items 2 and 3 (a real managed-identity node token, and the app-role IaC that grants it anything)
+# are not, and neither is a real hosting decision for sidecar_artifact_url. Until all three exist,
+# every tunnel is refused — see mina-sidecar.service's own comment for exactly why.

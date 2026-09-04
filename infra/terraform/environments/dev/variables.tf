@@ -74,6 +74,56 @@ variable "envoy_sha256" {
   }
 }
 
+variable "sidecar_version" {
+  description = <<-EOT
+    Opaque build identifier for the published Mina.EgressNode.Sidecar binary installed on the
+    nodes -- e.g. a git short SHA. Never "latest"; same AC-018 discipline as node_image_version.
+    Only used in the install script's log line -- sidecar_artifact_url and sidecar_sha256 are
+    what actually pin the binary. Empty is valid (see sidecar_artifact_url) and means "not set".
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "sidecar_sha256" {
+  description = <<-EOT
+    SHA-256 of the published Mina.EgressNode.Sidecar binary at sidecar_artifact_url. The node
+    refuses to install a binary that does not match -- the same supply-chain control as
+    envoy_sha256 (threat N7), for the process that decides which sessions get to tunnel at all
+    (M4-11). Produced by scripts/publish-sidecar.sh, which prints it next to the binary it
+    builds; verify against that output, not from anywhere else. Empty is valid and means "not
+    set" -- see sidecar_artifact_url.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.sidecar_sha256 == "" || can(regex("^[0-9a-f]{64}$", var.sidecar_sha256))
+    error_message = "sidecar_sha256 must be empty (not set) or a 64-character lowercase hex SHA-256 digest."
+  }
+}
+
+variable "sidecar_artifact_url" {
+  description = <<-EOT
+    HTTPS URL the node downloads the published sidecar binary from. Unlike Envoy (a public,
+    third-party GitHub release with a stable URL pattern to template a version into), this is
+    Mina's own build output from scripts/publish-sidecar.sh, and where that output actually gets
+    hosted for a booting node to reach is not decided yet (M4-29 items 2/3 -- managed-identity
+    auth for the node -- are the natural place that decision lands, since the same IMDS-token
+    mechanism could authenticate the artifact fetch too). Defaults to "" (not set): the install
+    script treats an empty URL as "no publish pipeline wired up for this environment yet" and
+    skips cleanly rather than failing the whole boot, the same way an empty node-token below
+    makes the sidecar itself refuse to start rather than block Envoy from coming up.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.sidecar_artifact_url == "" || can(regex("^https://", var.sidecar_artifact_url))
+    error_message = "sidecar_artifact_url must be empty (not set) or an https:// URL."
+  }
+}
+
 variable "export_activity_log" {
   description = <<-EOT
     Export the subscription's Activity Log to the diagnostics workspace (M4-26). Needs rights at the

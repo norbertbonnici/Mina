@@ -90,7 +90,7 @@ data "azurerm_client_config" "current" {}
 resource "azurerm_role_assignment" "deployer_crypto_officer" {
   scope                = azurerm_key_vault.cp.id
   role_definition_name = "Key Vault Crypto Officer"
-  principal_id          = data.azurerm_client_config.current.object_id
+  principal_id         = data.azurerm_client_config.current.object_id
 }
 
 # Created in the vault, so the private material is generated there and never exists in Terraform

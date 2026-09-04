@@ -33,12 +33,12 @@ module "control_plane_azure" {
 module "egress_stamp" {
   source = "../../modules/egress-stamp"
 
-  environment           = "dev"
-  region                = var.egress_region
-  region_short          = module.naming.region_short[var.egress_region]
-  prefix                = module.naming.prefix
-  tags                  = module.naming.tags
-  instance_count        = 1
+  environment    = "dev"
+  region         = var.egress_region
+  region_short   = module.naming.region_short[var.egress_region]
+  prefix         = module.naming.prefix
+  tags           = module.naming.tags
+  instance_count = 1
   # Standard_B2s/B2ms/D2s_v5 are all blocked for this subscription's offer type in every D-08
   # region (2026-09-04 finding, see PHASE0_DECISIONS.md D-08a): confirmed via the
   # Microsoft.Compute/skus API and a failed self-service quota request
@@ -67,11 +67,14 @@ module "egress_stamp" {
   # The module accepted custom_data all along and nothing ever passed it, which meant the VMSS
   # booted stock Ubuntu with no Mina software on it at all.
   custom_data = templatefile("${path.module}/../../../../egress-node/cloud-init.yaml.tftpl", {
-    envoy_config      = file("${path.module}/../../../../egress-node/envoy/envoy-bootstrap.yaml")
-    envoy_version     = var.envoy_version
-    envoy_sha256      = var.envoy_sha256
-    sidecar_region    = var.egress_region
-    control_plane_url = var.control_plane_node_url
+    envoy_config         = file("${path.module}/../../../../egress-node/envoy/envoy-bootstrap.yaml")
+    envoy_version        = var.envoy_version
+    envoy_sha256         = var.envoy_sha256
+    sidecar_version      = var.sidecar_version
+    sidecar_sha256       = var.sidecar_sha256
+    sidecar_artifact_url = var.sidecar_artifact_url
+    sidecar_region       = var.egress_region
+    control_plane_url    = var.control_plane_node_url
   })
 }
 
