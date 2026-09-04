@@ -9,6 +9,10 @@
 #     for this region — so a revoked session is refused within one allowlist refresh rather than
 #     serving until its certificate expires (M4-11). The check fails closed: if the sidecar does not
 #     answer, nothing is admitted.
+#   - ext_authz is not re-run on a connection already open, so admission alone leaves a revoked
+#     session's existing tunnel carrying traffic indefinitely. max_stream_duration bounds that at
+#     60 min (M4-11 remaining, D-19a) by resetting every tunnel's stream at that age regardless of
+#     admission state; the next CONNECT is a fresh stream and gets a fresh ext_authz check.
 #   - CONNECT is terminated and forwarded via the dynamic forward proxy to the requested
 #     authority. The authority (hostname) is the hostname telemetry of ADR-0002 Option 1 — logged
 #     without any TLS interception, since it is the plaintext CONNECT target.
@@ -93,6 +97,33 @@ static_resources:
             allow_connect: true
           upgrade_configs:
           - upgrade_type: CONNECT
+          # Bounds how long an admitted tunnel may stay open after the session behind it is
+          # revoked (M4-11 remaining, THREAT_MODEL residual risk 6): ext_authz decides admission
+          # per CONNECT and is never re-run on an established connection, so without this a
+          # long-lived tunnel opened before revocation — a large download, a websocket — would
+          # carry traffic indefinitely. 3600s (60 min) is the owner's deliberate choice (D-19a,
+          # 2026-09-04) over a tighter cap: it matches the certificate/lease TTL bound that
+          # already governed every tunnel before D-19 added faster admission for *new* ones, so
+          # it does not newly increase the platform's accepted worst case, while a shorter cap
+          # would trade directly against interrupting the long-running research tasks the
+          # platform exists to support. Applies to every stream equally, admitted or not — Envoy
+          # has no mechanism to force-close only a revoked session's tunnel, only every tunnel at
+          # this age.
+          #
+          # max_stream_duration, not max_connection_duration: proved out against a real Envoy
+          # (An_admitted_tunnel_is_force_closed_once_the_connection_duration_cap_elapses) that
+          # max_connection_duration logs "max connection duration reached" on schedule but then
+          # waits for the active stream to end before actually closing anything — exactly backwards
+          # for a CONNECT tunnel, whose one stream *is* the traffic this cap exists to bound, and
+          # which by definition does not end on its own before the cap should act. It would have
+          # bounded nothing. max_stream_duration resets the stream itself once the timer elapses,
+          # regardless of whether it is idle or actively carrying bytes; the agent multiplexes many
+          # browser tabs as separate streams over one shared mTLS connection to this node (ADR-0001
+          # C-tx), so this is also the narrower blast radius — one tab's tunnel resets, not every
+          # tab sharing that connection. The next CONNECT (same or a fresh connection) is a new
+          # stream and gets a fresh ext_authz check like any other new tunnel.
+          common_http_protocol_options:
+            max_stream_duration: 3600s
           access_log:
           - name: envoy.access_loggers.file
             typed_config:

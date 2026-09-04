@@ -141,3 +141,55 @@ TCP-on-8443 to HTTP against a health listener that is 200 only while the admissi
 sidecar binary today (BACKLOG M4-27, blocking): until it exists, a node built from this configuration
 refuses all research browsing, which is fail-closed and correctly so, but is the explicit reason
 M4-27 gates any environment beyond local/Docker-validated testing.
+
+## D-19a: open-tunnel duration cap (M4-11 remaining), amending D-19
+
+D-19 explicitly left one bound undecided: admission is checked per CONNECT, not on an established
+connection, so a tunnel already open when its session is revoked keeps carrying traffic until it
+closes on its own — bounded only by whatever the tunnel protocol itself does, not by anything Mina
+enforces. D-19 recorded picking a cap for this as "a UX/security trade the owner should make
+deliberately," not a default to set as a side effect of that change.
+
+**D-19a (2026-09-04, project owner: 60 minutes): cap it at the same ~60-minute bound that governed
+every tunnel before D-19 existed, not tighter.** `max_stream_duration: 3600s` on the tunnel
+listener's HTTP connection manager (`egress-node/envoy/envoy-bootstrap.yaml`) resets every tunnel's
+stream at that age, admitted or not; the next CONNECT is a fresh stream and gets a fresh `ext_authz`
+check like any other new tunnel. Offered as 15 min (tightest — closest to the ~15 s new-tunnel
+revocation bound), 30 min, or 60 min; the owner chose 60 min because it does not newly increase the
+platform's accepted worst case — a revoked session's already-open tunnel is now bounded by the same
+window the certificate/lease TTL bounded every tunnel by before D-19 — while a shorter cap would
+trade directly against interrupting the long-running research tasks (a large download, a slow site)
+the platform exists to support, which is exactly the trade D-19 declined to make silently.
+
+**The first implementation of this was wrong, and only actually running it against a real Envoy
+caught it.** `max_connection_duration`, not `max_stream_duration`, was the first thing tried — it
+reads as the obvious fit ("cap how long a *connection* may last"). Against a real Envoy it logs
+`max connection duration reached` exactly on schedule, then waits for the connection's active stream
+to finish before closing anything. A CONNECT tunnel's one stream *is* the traffic this cap exists to
+bound, so by construction it does not end on its own before the cap should act — the config would
+have shipped changing nothing, silently, while reading as if it worked. `An_admitted_tunnel_is_force_closed_once_the_connection_duration_cap_elapses`
+caught it immediately: a 2 s test override left the tunnel open past a 20 s poll window.
+`max_stream_duration` resets the stream itself at the configured age regardless of activity — the
+right primitive, and incidentally the narrower blast radius too, since the agent multiplexes many
+browser tabs as separate streams over one shared mTLS connection to the node (ADR-0001 C-tx): a
+stream reset ages out one tab's tunnel, not every tab sharing that connection the way a connection
+close would have. Re-run against the fix, the same test passes in 3 s (matching its 2 s override),
+and the full real-Envoy transport suite (24 tests, including large-payload and full-tunnel
+byte-flow checks) stays green — the change does not disturb ordinary tunnel operation.
+
+**What this does and does not change:**
+- Applies uniformly to every tunnel on every node, revoked or not — Envoy has no mechanism to reset
+  only the stream belonging to one revoked session; the only lever is a stream-age cap on the whole
+  listener. A session that is never revoked still has each of its tunnels cut at 60 minutes and must
+  reconnect.
+- Reconnection is transparent for most traffic (a fresh page load, an HTTP range request resuming a
+  download) but not guaranteed for all of it — a long-lived WebSocket or a protocol with no resume
+  semantics of its own simply drops and the analyst notices. Accepted as part of the same trade.
+- Does not change the ~15 s bound for a revoked session's *new* tunnels (D-19) or the 5-minute
+  `AdmissionMaxViewAge` partition bound — this is additive, closing only the "already open" gap
+  those left.
+- THREAT_MODEL residual risk 6 is updated from "not closed, accepted" to "bounded at 60 min,
+  accepted" rather than removed: the gap is smaller, not gone, and the trade-off keeping it open is
+  unchanged. See ARCHITECTURE §4/§5, `EnvoySessionAdmissionTests` for the real-Envoy test proving the
+  cap resets an open tunnel's stream on age alone, session still admitted throughout — verified
+  green against a real Envoy 2026-09-04 (BACKLOG M4-11).

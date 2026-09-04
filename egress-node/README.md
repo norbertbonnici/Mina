@@ -72,7 +72,8 @@ token (BACKLOG M4-29), without which the node admits nothing at all.
   but no longer sufficient — so the sidecar being unreachable, or its view older than
   `AdmissionMaxViewAge` (5 min default), means the node refuses every tunnel. That is fail-closed by
   design, not a bug: see D-19 (`docs/PHASE0_DECISIONS.md`) for the exact bounds this gives, including
-  the accepted limitation that an *already-open* tunnel is not closed on revocation.
+  the accepted limitation that an *already-open* tunnel is not re-admitted on revocation — bounded,
+  not eliminated, by the 60-minute `max_stream_duration` cap on the tunnel listener (D-19a).
 - **Ships Envoy's hostname telemetry upstream**, dropping the destination for any session marked
   suppressed before it is even queued, and dropping the record entirely for any CONNECT admission
   refused (a refusal is not a visit).

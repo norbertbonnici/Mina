@@ -83,6 +83,12 @@ public sealed class EnvoyProcess : IAsyncDisposable
     /// Optional work directory, for a caller that must know the admission socket path before Envoy
     /// starts. Created as a temp directory when not supplied.
     /// </param>
+    /// <param name="maxStreamDurationOverride">
+    /// Leave null. Set to rewrite the tunnel listener's <c>max_stream_duration</c> (M4-11 remaining,
+    /// D-19a) in the copy of the committed config this process runs, so a test can prove the cap
+    /// resets a still-admitted tunnel's stream without waiting out the real 60-minute production
+    /// value.
+    /// </param>
     public static async Task<EnvoyProcess> StartAsync(
         string envoyBinary,
         CertificateAuthority authority,
@@ -91,6 +97,7 @@ public sealed class EnvoyProcess : IAsyncDisposable
         bool requireClientCertificate = true,
         bool failureModeAllow = false,
         DirectoryInfo? workingDirectory = null,
+        TimeSpan? maxStreamDurationOverride = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(authority);
@@ -117,7 +124,7 @@ public sealed class EnvoyProcess : IAsyncDisposable
         var healthPort = FreePort();
         var adminSocket = Path.Combine(work.FullName, "admin.sock");
         var configPath = Path.Combine(work.FullName, "envoy.yaml");
-        File.WriteAllText(configPath, File.ReadAllText(LocateConfig())
+        var rendered = File.ReadAllText(LocateConfig())
             .Replace("/etc/mina/tls", work.FullName, StringComparison.Ordinal)
             .Replace("/var/log/mina/envoy-access.log",
                 Path.Combine(work.FullName, "envoy-access.log"), StringComparison.Ordinal)
@@ -140,7 +147,17 @@ public sealed class EnvoyProcess : IAsyncDisposable
             .Replace(
                 "failure_mode_allow: false",
                 $"failure_mode_allow: {(failureModeAllow ? "true" : "false")}",
-                StringComparison.Ordinal));
+                StringComparison.Ordinal);
+
+        if (maxStreamDurationOverride is { } cap)
+        {
+            rendered = rendered.Replace(
+                "max_stream_duration: 3600s",
+                $"max_stream_duration: {(int)cap.TotalSeconds}s",
+                StringComparison.Ordinal);
+        }
+
+        File.WriteAllText(configPath, rendered);
 
         var startInfo = new ProcessStartInfo(envoyBinary)
         {

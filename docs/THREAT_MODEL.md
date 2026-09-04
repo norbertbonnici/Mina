@@ -59,9 +59,11 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
   revoked or ended session is refused at the node within one refresh interval (~15 s) rather than
   working until it expires — the residual is a certificate stolen and reused *before* the session is
   revoked, which admission cannot distinguish from the legitimate holder, and a tunnel already open
-  at the moment of revocation, which is not re-checked (accepted limitation, D-19). *Test:*
-  token/cert expiry tests; `EnvoySessionAdmissionTests` measures the refusal against the refresh
-  interval and the fail-closed case against the sidecar being unreachable, against a real Envoy.
+  at the moment of revocation, which is not re-checked but is bounded to 60 min by
+  `max_stream_duration` (accepted limitation, D-19/D-19a). *Test:* token/cert expiry tests;
+  `EnvoySessionAdmissionTests` measures the refusal against the refresh interval, the fail-closed
+  case against the sidecar being unreachable, and the duration cap resetting a still-admitted
+  tunnel's stream, all against a real Envoy.
 - **D (DoS):** ingress flooding. *Mitigate:* 443-only, optional corp-CIDR allowlist, LB/NSG,
   autoscale headroom, alerting. *Test:* load test + alert check.
 
@@ -139,7 +141,7 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 | Approval never expires | TTL mandatory; expiry ends the approval always, and terminates the session when suppression was activated (D-06a); scheduler + clock-skew tests (AC-011) |
 | Egress node becomes open proxy | mTLS against the internal CA **and** node-side session admission (D-19, M4-11); no unauthenticated listener; destination deny-list for private/link-local space; external scans (AC-016). A revoked or unknown session's certificate is refused within one refresh interval (~15 s), not the certificate TTL |
 | Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017). Unchanged by ADR-0006, which deliberately declined the tunnel route: the on-premises control plane is reached at a published DMZ endpoint over the public internet, so this stays a blanket denial rather than becoming an allowlist |
-| Entra token stolen | Short session certs renewable only with fresh device-bound tokens; revocation is refusal to renew. Since D-19 (M4-11) the node also refuses to admit *new* tunnels for a revoked session within one refresh interval (~15 s) — the lease TTL (≈60 min) still bounds an already-open tunnel, which admission does not re-check |
+| Entra token stolen | Short session certs renewable only with fresh device-bound tokens; revocation is refusal to renew. Since D-19 (M4-11) the node also refuses to admit *new* tunnels for a revoked session within one refresh interval (~15 s) — an already-open tunnel, which admission does not re-check, is bounded by the 60-minute `max_stream_duration` cap (D-19a) instead, not by the lease TTL itself |
 | Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC. Blast radius is unchanged by ADR-0006: the node's reachable set is still the public internet plus one published control-plane endpoint, which is what it was when that endpoint was in Azure. What the endpoint exposes is bounded by the split listeners — the published listener carries only allowlist and telemetry ingest, never the portal or the audit read API |
 | Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence). Since ADR-0006 the store is on FIAU infrastructure and the anchors are in Azure immutable storage, so an on-premises administrator cannot make an alteration unanchored (D-18); anchor access is itself logged (M4-24) |
 | Published control-plane endpoint used to reach the portal, audit API or admin routes | Split listeners enforced by accepting port with default deny; the proxy has no management-port server block; host firewall; 404 before authentication (ADR-0006 constraint 1, M4-16) — see B4 |
@@ -174,13 +176,16 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 5. Control-plane outage pauses new sessions and stops renewals within one lease period
    (availability, not safety). Since ADR-0006 that availability is the FIAU's to provide: one of
    each host today (M4-15), HA and backup/restore in M4-22.
-6. **A tunnel open at the moment of revocation is not closed by admission** (D-19, M4-11): Envoy
-   decides admission per CONNECT and does not re-check an established connection, so a long-lived
-   tunnel — a large download, a websocket, a persistent connection to the destination — opened
-   before a session was revoked keeps carrying traffic until it closes on its own. Accepted rather
-   than capping connection duration, which would trade this off against interrupting exactly the
-   long-running research tasks the platform exists to support; picking a cap is a deliberate
-   availability/security decision left open (BACKLOG M4-11 remaining), not decided by this change.
+6. **A tunnel open at the moment of revocation is bounded, not closed immediately** (D-19/D-19a,
+   M4-11): Envoy decides admission per CONNECT and does not re-check an established connection, so
+   a long-lived tunnel — a large download, a websocket, a persistent connection to the destination
+   — opened before a session was revoked keeps carrying traffic until it closes on its own or until
+   `max_stream_duration` (60 min, tunnel listener) resets its stream, whichever is first. Reduced
+   from unbounded to 60 minutes rather than eliminated: a tighter cap (15 or 30 min) was considered
+   and declined (BACKLOG M4-11, D-19a, 2026-09-04) because it would trade off against interrupting
+   exactly the long-running research tasks the platform exists to support, and 60 min does not newly
+   increase the platform's accepted worst case — it matches the certificate/lease TTL bound that
+   governed every tunnel before D-19 existed.
 
 ## 8. Security testing required
 

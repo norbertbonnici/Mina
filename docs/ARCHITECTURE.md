@@ -255,9 +255,11 @@ missing connection string now refuses the host rather than selecting an in-memor
   This bounds *new* admissions to roughly the sidecar's refresh interval (default 15 s), not the
   certificate's remaining TTL — a certificate for a session issued since the last refresh is
   covered by a bounded refresh-on-miss rather than waiting for the next poll. **An already-open
-  tunnel is not affected**: Envoy does not re-run admission on an established connection, so a
-  long-lived tunnel opened before revocation keeps carrying traffic until it closes on its own —
-  see the accepted limitation recorded at D-19. No CAE dependency.
+  tunnel is not re-admitted**: Envoy does not re-run admission on an established connection, so a
+  long-lived tunnel opened before revocation keeps carrying traffic until it closes on its own or
+  until `max_stream_duration` (60 min, tunnel listener) resets its stream — the owner's
+  deliberate cap on the accepted limitation recorded at D-19/D-19a, not elimination of it. No CAE
+  dependency.
 - No local passwords, no separate credential store, break-glass excepted (§12).
 
 ```mermaid
@@ -299,8 +301,8 @@ Fail-closed (FR-007, AC-004) is layered — every failure lands on "no traffic",
 |---|---|
 | Tunnel drops / egress unreachable | Agent closes the loopback listener; browser gets proxy errors; fixed proxy config cannot fall back to DIRECT; agent retries and surfaces state in tray |
 | Agent killed / crashes | Loopback proxy gone ⇒ browser has no path; C2 WFP rules persist independently of the agent process, so even flag-stripped launches stay contained |
-| Session revoked / expired | Control plane stops renewal, and the node's sidecar stops admitting *new* tunnels for the session once its view no longer lists it — within one refresh interval (~15 s), or immediately for a session that was never listed (D-19, M4-11). A tunnel already open when the session is revoked is not affected: Envoy does not re-run admission on an established connection, so it keeps carrying traffic until it closes on its own (accepted limitation, D-19). Loopback closes when the agent's renewal is refused |
-| Control plane down | Nodes fail closed once their session view exceeds `AdmissionMaxViewAge` (5 min default) — refusing *new* tunnels for sessions they still list, not only ones dropped from it — sooner than the ~60 min this superseded, because admission no longer rests on certificate validity alone (D-19). Existing open tunnels are unaffected by this row for the same reason as above |
+| Session revoked / expired | Control plane stops renewal, and the node's sidecar stops admitting *new* tunnels for the session once its view no longer lists it — within one refresh interval (~15 s), or immediately for a session that was never listed (D-19, M4-11). A tunnel already open when the session is revoked is not re-admitted: Envoy does not re-run admission on an established connection, so it keeps carrying traffic until it closes on its own or until the 60-minute `max_stream_duration` cap resets its stream regardless (accepted limitation, bounded by D-19a). Loopback closes when the agent's renewal is refused |
+| Control plane down | Nodes fail closed once their session view exceeds `AdmissionMaxViewAge` (5 min default) — refusing *new* tunnels for sessions they still list, not only ones dropped from it — sooner than the ~60 min this superseded, because admission no longer rests on certificate validity alone (D-19). Existing open tunnels are bounded by the same 60-minute duration cap as the row above, not otherwise affected |
 | Research browser launched outside the agent | C2: WFP allows only loopback ⇒ nothing works until a session exists; C1 fallback: detective controls only (ADR-0001) |
 
 ## 6. Leak controls
