@@ -171,6 +171,31 @@ resource "azurerm_storage_container" "audit_exports" {
   container_access_type = "private"
 }
 
+# The deployer's own access, same reasoning as deployer_secrets_officer above: Owner/Contributor at
+# the subscription grants no data-plane access to blob content on its own (confirmed live,
+# `az storage blob list --auth-mode login` against this account refuses without it) -- data actions
+# need an explicit data-plane role, deliberately, since that separation is what shared_access_key_enabled
+# = false is for. An operator inspecting or troubleshooting exports needs this the same way
+# `mina-ca bootstrap` needs Secrets Officer.
+resource "azurerm_role_assignment" "deployer_storage_blob_contributor" {
+  scope                = azurerm_storage_container.audit_exports.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# The running control plane's own access to the container: write new exports, read them back for
+# anchor verification (AuditAnchorVerifier, M4-19). Scoped to the container rather than the whole
+# storage account -- least privilege, same reasoning as the Key Vault role assignments above. This
+# role does not grant delete; the immutability policy is what actually refuses that, for anyone,
+# which is the point. Created only once the hosts have an Arc identity to grant it to (M4-18).
+resource "azurerm_role_assignment" "control_plane_audit_writer" {
+  count = var.control_plane_principal_id == "" ? 0 : 1
+
+  scope                = azurerm_storage_container.audit_exports.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = var.control_plane_principal_id
+}
+
 # ---------------------------------------------------------------------------------------------
 # Diagnostics (M4-24)
 # ---------------------------------------------------------------------------------------------

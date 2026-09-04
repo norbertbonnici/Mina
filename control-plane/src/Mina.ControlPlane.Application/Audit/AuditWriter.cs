@@ -14,6 +14,16 @@ public sealed class AuditOptions
 
     /// <summary>How many times to retry when another writer takes the sequence first.</summary>
     public int MaxAppendAttempts { get; set; } = 5;
+
+    /// <summary>
+    /// Azure immutable-blob container for exported anchors (M4-19, D-18) — e.g.
+    /// <c>https://staccountaudit.blob.core.windows.net/audit-exports</c>, which Terraform outputs
+    /// as <c>audit_export_container_uri</c>. Unset means the filesystem sink runs instead, which a
+    /// host that is not Development refuses to start on.
+    /// </summary>
+    public string? ExportContainerUri { get; set; }
+
+    public bool IsAzureExportConfigured => !string.IsNullOrWhiteSpace(ExportContainerUri);
 }
 
 /// <summary>What to record, before it is placed in the chain.</summary>

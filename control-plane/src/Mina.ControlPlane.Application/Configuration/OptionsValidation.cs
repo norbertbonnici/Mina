@@ -186,6 +186,15 @@ public sealed class AuditOptionsValidator : IValidateOptions<AuditOptions>
                 + "at least 1, or no audit event can ever be written and every governance action fails.");
         }
 
+        if (options.IsAzureExportConfigured
+            && (!Uri.TryCreate(options.ExportContainerUri, UriKind.Absolute, out var containerUri)
+                || containerUri.Scheme != Uri.UriSchemeHttps))
+        {
+            failures.Add(
+                $"{AuditOptions.Section}:ExportContainerUri must be an absolute https URI "
+                + $"(https://<account>.blob.core.windows.net/<container>); found '{options.ExportContainerUri}'.");
+        }
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

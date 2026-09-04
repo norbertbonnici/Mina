@@ -115,6 +115,31 @@ public class OptionsValidationTests
             .Validate(null, new AuditOptions { MaxAppendAttempts = 0 }).Failed);
     }
 
+    [Fact]
+    public void A_configured_export_container_uri_must_be_an_absolute_https_uri()
+    {
+        // Unset is valid — it means the filesystem sink runs, gated by HostingGuard instead (M4-19).
+        Assert.True(new AuditOptionsValidator().Validate(null, new AuditOptions()).Succeeded);
+
+        Assert.True(new AuditOptionsValidator()
+            .Validate(null, new AuditOptions
+            {
+                ExportContainerUri = "https://staccountaudit.blob.core.windows.net/audit-exports",
+            })
+            .Succeeded);
+
+        Assert.True(new AuditOptionsValidator()
+            .Validate(null, new AuditOptions { ExportContainerUri = "not a uri" }).Failed);
+        Assert.True(new AuditOptionsValidator()
+            .Validate(null, new AuditOptions
+            {
+                // http, not https: a storage account reachable in plain text is not immutable
+                // storage, it is a storage account someone forgot to configure.
+                ExportContainerUri = "http://staccountaudit.blob.core.windows.net/audit-exports",
+            })
+            .Failed);
+    }
+
     private static ValidateOptionsResult Validate(SensitiveSessionOptions options) =>
         new SensitiveSessionOptionsValidator().Validate(null, options);
 

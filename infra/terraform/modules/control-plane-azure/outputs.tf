@@ -27,3 +27,12 @@ output "alerting_enabled" {
   description = "False when no receiver was configured, in which case nothing is alerting (M4-27)."
   value       = length(var.alert_email_receivers) > 0 || var.alert_webhook_uri != null
 }
+
+output "control_plane_audit_storage_access_granted" {
+  description = <<-EOT
+    Whether the control plane's own identity can write and read audit exports. False means no
+    principal was supplied (M4-18 not done), so the API falls back to the filesystem sink (or
+    refuses to start outside Development).
+  EOT
+  value       = var.control_plane_principal_id != ""
+}

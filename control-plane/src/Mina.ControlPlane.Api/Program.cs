@@ -169,16 +169,29 @@ builder.Services.AddScoped<AuditChainVerifier>();
 builder.Services.AddScoped<AuditAnchorVerifier>();
 builder.Services.AddScoped<AuditExportService>();
 // Audit anchors must land in storage that can refuse an overwrite. A filesystem cannot, so the
-// tamper-evidence is only as good as the administrator who owns the disk (ADR-0006 keeps the real
-// anchors in Azure immutable blob storage; that sink is still to be written).
-HostingGuard.RequireExplicitFallback(
-    allowDevelopmentFallbacks,
-    "a filesystem audit export sink, which cannot enforce write-once and so anchors nothing",
-    "Mina:Audit:ExportContainerUri (Azure immutable blob storage)");
-builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSink(
-    builder.Configuration["Mina:Audit:ExportPath"]
-    ?? Path.Combine(AppContext.BaseDirectory, "audit-exports"),
-    builder.Configuration[$"{AuditOptions.Section}:Environment"] ?? "dev"));
+// tamper-evidence is only as good as the administrator who owns the disk. Configured means Azure
+// immutable blob storage (D-18, M4-19) — a delete or overwrite of a blob inside its retention
+// window is refused by the storage service itself, even to the subscription owner.
+var auditOptions = builder.Configuration.GetSection(AuditOptions.Section).Get<AuditOptions>()
+    ?? new AuditOptions();
+if (auditOptions.IsAzureExportConfigured)
+{
+    builder.Services.AddSingleton<IAuditExportSink>(_ => new AzureBlobAuditExportSink(
+        new Uri(auditOptions.ExportContainerUri!),
+        new Azure.Identity.DefaultAzureCredential(),
+        auditOptions.Environment));
+}
+else
+{
+    HostingGuard.RequireExplicitFallback(
+        allowDevelopmentFallbacks,
+        "a filesystem audit export sink, which cannot enforce write-once and so anchors nothing",
+        "Mina:Audit:ExportContainerUri (Azure immutable blob storage)");
+    builder.Services.AddSingleton<IAuditExportSink>(_ => new FileSystemAuditExportSink(
+        builder.Configuration["Mina:Audit:ExportPath"]
+        ?? Path.Combine(AppContext.BaseDirectory, "audit-exports"),
+        auditOptions.Environment));
+}
 // The export is the one that is not safe duplicated, so it takes a lease (M4-23). It runs in every
 // instance; only the lease holder does the work.
 builder.Services.AddHostedService<AuditExportBackgroundService>();
