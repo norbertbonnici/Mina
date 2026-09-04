@@ -17,5 +17,6 @@ locals {
     germanywestcentral = "gwc"
     francecentral      = "frc"
     swedencentral      = "sdc"
+    spaincentral       = "spc" # dev/PoC-only, D-08a
   }
 }

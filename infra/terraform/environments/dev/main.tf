@@ -9,10 +9,11 @@ module "naming" {
 module "control_plane_azure" {
   source = "../../modules/control-plane-azure"
 
-  prefix    = module.naming.prefix
-  location  = var.egress_region
-  tenant_id = var.tenant_id
-  tags      = module.naming.tags
+  prefix       = module.naming.prefix
+  location     = var.egress_region
+  region_short = module.naming.region_short[var.egress_region]
+  tenant_id    = var.tenant_id
+  tags         = module.naming.tags
 
   control_plane_egress_cidrs = var.control_plane_egress_cidrs
 
@@ -38,30 +39,27 @@ module "egress_stamp" {
   prefix                = module.naming.prefix
   tags                  = module.naming.tags
   instance_count        = 1
-  # BLOCKED (2026-09-04): every mainstream VM family (B-series, D-series -- confirmed via the
-  # Microsoft.Compute/skus API for Standard_B2s, Standard_B2ms and Standard_D2s_v5, in both
-  # northeurope and germanywestcentral) reports "reasonCode: NotAvailableForSubscription" for
-  # this subscription. Only exotic/expensive families (confidential-compute DC-series,
-  # huge-memory M-series, HPC, GPU) come back unrestricted. Core quota itself is fine (0/4 vCPUs
-  # used in the standard families) -- this is Azure's restricted-VM-SKU-access gate that some
-  # subscription offer types (free trial / sponsorship credit) apply to abuse-prone cheap
-  # families, not a capacity or quota problem, and not something a different SKU or region works
-  # around. Unblocking it needs a support-ticket "Quota increase" request in the Azure Portal for
-  # this subscription requesting access to a standard VM series (e.g. Bsv2 or Dsv5) -- see the
-  # 2026-09-04 decision log. Left as Standard_B2ms (still blocked) rather than switched to an
-  # available-but-wrong-class SKU, so the very next `terraform apply` after the ticket is granted
-  # is the real, cost-appropriate test.
-  vm_sku                = "Standard_B2ms"
+  # Standard_B2s/B2ms/D2s_v5 are all blocked for this subscription's offer type in every D-08
+  # region (2026-09-04 finding, see PHASE0_DECISIONS.md D-08a): confirmed via the
+  # Microsoft.Compute/skus API and a failed self-service quota request
+  # (ResourceNotAvailableForOffer) -- not a capacity or quota-count problem, and the CLI support-
+  # ticket path is separately closed off (this subscription has no paid support plan). The
+  # Microsoft.Compute/skus API showed Standard_B2as_v2 (Bas_v2, AMD, same 2 vCPU/8GiB size)
+  # unrestricted in spaincentral outside availability zone 2 -- this stamp deploys non-zonal
+  # (zones = [] default), so it doesn't hit that carve-out. Dev/PoC-only per D-08a; not a
+  # statement about which family production should use.
+  vm_sku                = "Standard_B2as_v2"
   ingress_allowed_cidrs = var.ingress_allowed_cidrs
   corp_public_cidrs     = var.corp_public_cidrs
   admin_ssh_public_key  = var.admin_ssh_public_key
   node_image_version    = var.node_image_version
 
-  # This subscription's hard quota in northeurope is 3 Standard IPv4 public IPs total (confirmed
-  # via `az network list-usages`); the ingress LB's own public IP already claims 1 of those. The
-  # module default (/30, 4 addresses, for production rotation headroom) would push the total to
-  # 5. /31 is the smallest size Azure's Public IP Prefix accepts, landing exactly on the
-  # remaining quota. Dev deliberately forgoes NAT rotation headroom here -- a PoC constraint on a
+  # This subscription's hard quota is 3 Standard IPv4 public IPs total per region (confirmed via
+  # `az network list-usages` in both northeurope and spaincentral -- a subscription-wide limit,
+  # not region-specific); the ingress LB's own public IP already claims 1 of those. The module
+  # default (/30, 4 addresses, for production rotation headroom) would push the total to 5. /31
+  # is the smallest size Azure's Public IP Prefix accepts, landing exactly on the remaining
+  # quota. Dev deliberately forgoes NAT rotation headroom here -- a PoC constraint on a
   # free-tier-shaped subscription, not a design change.
   nat_ip_prefix_length = 31
 

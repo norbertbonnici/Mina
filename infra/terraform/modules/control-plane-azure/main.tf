@@ -48,7 +48,10 @@ locals {
 # ---------------------------------------------------------------------------------------------
 
 resource "azurerm_key_vault" "cp" {
-  name                = "kv-${var.prefix}-cp"
+  # Region-qualified: see the region_short variable for why (globally-unique name, soft-delete
+  # reserves it for up to 90 days after any teardown, purge protection makes early reuse
+  # impossible even for an empty dev vault).
+  name                = "kv-${var.prefix}-${var.region_short}-cp"
   resource_group_name = azurerm_resource_group.control.name
   location            = azurerm_resource_group.control.location
   tenant_id           = var.tenant_id

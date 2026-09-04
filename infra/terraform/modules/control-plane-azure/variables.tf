@@ -8,6 +8,19 @@ variable "location" {
   type        = string
 }
 
+variable "region_short" {
+  description = <<-EOT
+    Short region code (module.naming.region_short) appended to the Key Vault name. Key Vault
+    names are globally unique across all of Azure, and a deleted vault's name stays reserved for
+    its soft-delete retention period (up to 90 days) even with purge protection off -- with it
+    on (the default here), the name is unavailable for the full retention window, no early purge
+    possible. This module's own region can and did move during dev/PoC troubleshooting
+    (2026-09-04), which hit exactly that collision. Region-qualifying the name makes a future
+    region move safe instead of a 90-day name squat.
+  EOT
+  type        = string
+}
+
 variable "tenant_id" {
   description = "Entra tenant id that owns the Key Vault."
   type        = string

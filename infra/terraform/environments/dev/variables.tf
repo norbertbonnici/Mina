@@ -4,15 +4,16 @@ variable "egress_region" {
   default     = "westeurope"
 
   validation {
-    # D-08's approved EU launch regions -- nothing else enforces this. Getting the region wrong
-    # is exactly the kind of thing CLAUDE.md requires a human decision for ("changing the
-    # approved production region/public-IP strategy"), so a typo or a copy-pasted unapproved
-    # region fails the plan instead of silently standing up a stamp somewhere unapproved.
+    # D-08's approved EU launch regions, plus D-08a's dev/PoC-only addition -- nothing else
+    # enforces this. Getting the region wrong is exactly the kind of thing CLAUDE.md requires a
+    # human decision for ("changing the approved production region/public-IP strategy"), so a
+    # typo or a copy-pasted unapproved region fails the plan instead of silently standing up a
+    # stamp somewhere unapproved. spaincentral is dev/PoC-only, not a production candidate.
     condition = contains(
-      ["westeurope", "northeurope", "germanywestcentral", "francecentral"],
+      ["westeurope", "northeurope", "germanywestcentral", "francecentral", "spaincentral"],
       var.egress_region
     )
-    error_message = "egress_region must be one of D-08's approved launch regions: westeurope, northeurope, germanywestcentral, francecentral."
+    error_message = "egress_region must be one of D-08's approved launch regions (westeurope, northeurope, germanywestcentral, francecentral) or D-08a's dev/PoC-only spaincentral."
   }
 }
 

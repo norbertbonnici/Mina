@@ -375,7 +375,13 @@ token taken from the environment so it never enters a variable, a tfvars file or
 Approved region list (D-08, decided 2026-08-31): `westeurope`, `northeurope`,
 `germanywestcentral`, `francecentral`. Analysts can select only regions with an **active**
 stamp: dev/MVP runs one (`westeurope`); production launches with **one active stamp** (D-11),
-with further approved regions activated on demand (~€240/mo each, COST_MODEL).
+with further approved regions activated on demand (~€240/mo each, COST_MODEL). Production
+region selection is unaffected by D-08a below.
+
+`spaincentral` is additionally approved **for the dev/PoC stamp only** (D-08a, decided
+2026-09-04): the dev subscription's offer type blocks every D-08 region for mainstream VM
+families, and spaincentral is where a same-class replacement was confirmed available. Not a
+candidate for production.
 
 ## 9. Capacity and availability
 
