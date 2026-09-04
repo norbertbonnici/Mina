@@ -11,6 +11,8 @@
 // item it receives, so a stale view or a compromised node cannot get a suppressed session's
 // destinations recorded (threat N5).
 
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
 using Mina.EgressNode.Sidecar;
 using Mina.Observability;
@@ -38,30 +40,69 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<NodeSessionView>();
 builder.Services.AddSingleton<TelemetryBatcher>();
 
-// In Azure the node authenticates with its own managed identity. Until the dev subscription exists
-// that token comes from configuration, and the sidecar says so rather than pretending otherwise.
-builder.Services.AddSingleton<INodeTokenProvider>(sp =>
+// Mirrors Mina.ControlPlane.Hosting.HostingGuard.RequireExplicitFallback's exact behaviour
+// (config key included) without a project reference to it — that project also carries listener
+// separation and Data Protection concerns with nothing to do with this node.
+static void RequireExplicitDevelopmentFallback(bool allowed, string standIn, string realSetting)
 {
-    // Configuration, or a systemd credential (LoadCredential=mina-node-token:…) — a file only this
-    // unit's user can read, which is where a bearer token belongs on a shared host.
-    var token = builder.Configuration["Mina:Sidecar:AccessToken"];
-    if (string.IsNullOrWhiteSpace(token)
-        && Environment.GetEnvironmentVariable("CREDENTIALS_DIRECTORY") is { Length: > 0 } credentials
-        && File.Exists(Path.Combine(credentials, "mina-node-token")))
+    if (allowed)
     {
-        token = File.ReadAllText(Path.Combine(credentials, "mina-node-token")).Trim();
+        return;
     }
 
-    if (string.IsNullOrWhiteSpace(token))
-    {
-        throw new InvalidOperationException(
-            "No node token configured. Set Mina:Sidecar:AccessToken or provide the mina-node-token credential " +
-            "for development; managed-identity token acquisition lands with the Azure deployment (M2-2c/M3-4 follow-up).");
-    }
+    throw new InvalidOperationException(
+        $"Refusing to start: this node would use {standIn}. Configure {realSetting} for a real "
+        + "deployment, or set Mina:AllowDevelopmentFallbacks=true to accept the stand-in deliberately.");
+}
 
-    SidecarStartupLog.UsingConfiguredToken(sp.GetRequiredService<ILogger<Program>>());
-    return new ConfiguredNodeTokenProvider(token!);
-});
+// In Azure the node authenticates with its own managed identity (M4-29 item 2, ARCHITECTURE §4 —
+// no client secret anywhere in the product). Mina:Sidecar:ManagedIdentityScope selects that path;
+// its absence is the dev stand-in below, gated the same way the control-plane API gates its own
+// dev-only substitutions (Mina.ControlPlane.Hosting.HostingGuard) — not referenced directly here,
+// since that project also carries listener-separation and Data Protection concerns that have
+// nothing to do with this node, but the same explicit-opt-in discipline applies.
+var managedIdentityScope = builder.Configuration["Mina:Sidecar:ManagedIdentityScope"];
+if (!string.IsNullOrWhiteSpace(managedIdentityScope))
+{
+    builder.Services.AddSingleton<TokenCredential>(new ManagedIdentityCredential());
+    builder.Services.AddSingleton<INodeTokenProvider>(sp => new ManagedIdentityNodeTokenProvider(
+        sp.GetRequiredService<TokenCredential>(),
+        managedIdentityScope,
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<ILogger<ManagedIdentityNodeTokenProvider>>()));
+}
+else
+{
+    var allowDevelopmentFallbacks = builder.Configuration.GetValue(
+        "Mina:AllowDevelopmentFallbacks", defaultValue: builder.Environment.IsDevelopment());
+    RequireExplicitDevelopmentFallback(
+        allowDevelopmentFallbacks,
+        "a configured node token, which is a fixed value with no expiry and cannot observe revocation",
+        "Mina:Sidecar:ManagedIdentityScope (the node's real managed identity)");
+
+    builder.Services.AddSingleton<INodeTokenProvider>(sp =>
+    {
+        // Configuration, or a systemd credential (LoadCredential=mina-node-token:…) — a file only
+        // this unit's user can read, which is where a bearer token belongs on a shared host.
+        var token = builder.Configuration["Mina:Sidecar:AccessToken"];
+        if (string.IsNullOrWhiteSpace(token)
+            && Environment.GetEnvironmentVariable("CREDENTIALS_DIRECTORY") is { Length: > 0 } credentials
+            && File.Exists(Path.Combine(credentials, "mina-node-token")))
+        {
+            token = File.ReadAllText(Path.Combine(credentials, "mina-node-token")).Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new InvalidOperationException(
+                "No node token configured. Set Mina:Sidecar:AccessToken or provide the mina-node-token " +
+                "credential for development, or configure Mina:Sidecar:ManagedIdentityScope for a real deployment.");
+        }
+
+        SidecarStartupLog.UsingConfiguredToken(sp.GetRequiredService<ILogger<Program>>());
+        return new ConfiguredNodeTokenProvider(token!);
+    });
+}
 
 builder.Services.AddHttpClient<ControlPlaneNodeClient>(client =>
 {
@@ -95,7 +136,11 @@ internal static partial class SidecarStartupLog
     public static partial void UsingConfiguredToken(ILogger logger);
 }
 
-/// <summary>Development token provider; production uses the node's managed identity.</summary>
+/// <summary>
+/// Development-only stand-in: a fixed token with no expiry, gated behind
+/// Mina:AllowDevelopmentFallbacks the same way the control plane gates its own dev substitutions.
+/// A real deployment uses <see cref="ManagedIdentityNodeTokenProvider"/> instead.
+/// </summary>
 internal sealed class ConfiguredNodeTokenProvider(string token) : INodeTokenProvider
 {
     public Task<string> GetTokenAsync(CancellationToken cancellationToken) => Task.FromResult(token);

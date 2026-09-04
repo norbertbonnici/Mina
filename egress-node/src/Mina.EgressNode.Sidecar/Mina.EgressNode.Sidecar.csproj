@@ -16,6 +16,10 @@
     <!-- Envoy's ext_authz speaks gRPC to the sidecar; Type=notify readiness for systemd. -->
     <PackageReference Include="Grpc.AspNetCore" Version="2.83.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.11" />
+    <!-- The node's real identity (M4-29 item 2): a token from the VMSS's own system-assigned
+         managed identity, no client secret anywhere (ARCHITECTURE §4). Version matches what the
+         rest of the solution already resolves to transitively via Microsoft.Data.SqlClient. -->
+    <PackageReference Include="Azure.Identity" Version="1.17.2" />
   </ItemGroup>
 
   <ItemGroup>

@@ -38,8 +38,12 @@ services:
       Mina__Sidecar__AllowlistRefreshInterval: "00:00:05"
       Mina__Sidecar__AdmissionMaxViewAge: "00:00:20"
       # Not validated by the stub. A real deployment gets this from a systemd LoadCredential
-      # (cloud-init.yaml.tftpl); see BACKLOG M4-29 for why that isn't wired to a real identity yet.
+      # (cloud-init.yaml.tftpl) via the node's own managed identity instead (M4-29 item 2) — this
+      # stack has no Azure identity to present, so it stays on the fixed dev token deliberately.
       Mina__Sidecar__AccessToken: dev-stub-token
+      # No ASPNETCORE_ENVIRONMENT is set for this container (defaults to Production), so the
+      # sidecar's own dev-fallback gate needs this explicitly rather than inferring Development.
+      Mina__AllowDevelopmentFallbacks: "true"
     volumes:
       - access-log:/var/log/mina:ro
       - authz-socket:/run/mina-sidecar

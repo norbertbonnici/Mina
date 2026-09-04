@@ -215,14 +215,19 @@ write_files:
       Mina__Sidecar__ControlPlaneBaseAddress=${control_plane_url}
       Mina__Sidecar__AccessLogPath=/var/log/mina/envoy-access.log
       Mina__Sidecar__AuthzSocketPath=/run/mina-sidecar/authz.sock
+      %{ if sidecar_managed_identity_scope != "" ~}
+      Mina__Sidecar__ManagedIdentityScope=${sidecar_managed_identity_scope}
+      %{ endif ~}
       DOTNET_gcServer=0
 
-  # The node's token for the control plane. Empty here: the managed-identity provider is not
-  # written yet (M3-4 remaining, now blocking — see BACKLOG M4-27), and a bearer token does not
-  # belong in cloud-init. Delivered to the unit as a systemd credential, which only its user can
-  # read, so that when a development token has to be placed by hand it lands somewhere with the
-  # right mode rather than in an environment file. An empty token makes the sidecar refuse to
-  # start, which is the correct state for a node with no identity.
+  # Only reached at all when sidecar_managed_identity_scope above is unset -- with a real scope
+  # configured the sidecar uses the VMSS's own managed identity instead (M4-29 item 2, done) and
+  # never reads this file. Empty here regardless, since a bearer token does not belong in
+  # cloud-init: delivered to the unit as a systemd credential, which only its user can read, so
+  # that when a development token has to be placed by hand it lands somewhere with the right mode
+  # rather than in an environment file. An empty token (with no managed-identity scope configured
+  # either) makes the sidecar refuse to start, which is the correct state for a node with no
+  # identity at all.
   - path: /etc/mina/sidecar/node-token
     permissions: "0600"
     owner: "root:root"
@@ -244,11 +249,15 @@ write_files:
       # mina-install-sidecar.sh (below, in runcmd) now installs a real published binary here
       # (M4-29 item 1, done) -- but only once sidecar_artifact_url actually points somewhere a
       # node can reach; that hosting decision is still open, so this environment's tfvars may
-      # still leave it unset. Either way, an empty node-token (below) makes the sidecar refuse to
-      # start regardless of whether the binary is present (M4-29 items 2/3, not done). Until both
-      # are, this unit fails here, loudly, and Envoy — which starts regardless — refuses every
-      # tunnel because the admission socket does not exist. That is the node failing closed, and
-      # it is the intended state of a node without a working sidecar.
+      # still leave it unset. The sidecar itself can now authenticate with the VMSS's own managed
+      # identity when sidecar_managed_identity_scope is configured (M4-29 item 2, done) -- but the
+      # control plane will not yet accept the resulting token, because nothing assigns the
+      # Mina.Node/Mina.Node.<region> app roles to that identity's service principal (M4-29 item 3,
+      # not done). Until the binary is reachable, a scope is configured, and the role assignment
+      # exists, this unit fails here or the sidecar itself refuses to authenticate, and Envoy —
+      # which starts regardless — refuses every tunnel because the admission socket does not
+      # exist. That is the node failing closed, and it is the intended state of a node without a
+      # fully working sidecar identity.
       ExecStartPre=/usr/bin/test -x /opt/mina/sidecar/Mina.EgressNode.Sidecar
       ExecStart=/opt/mina/sidecar/Mina.EgressNode.Sidecar
       EnvironmentFile=/etc/mina/sidecar/sidecar.env
@@ -332,7 +341,8 @@ runcmd:
   - [ sh, -c, "systemctl enable --now mina-sidecar.service || true" ]
   - [ systemctl, enable, --now, mina-envoy.service ]
 
-# The Wazuh agent joins here in M3-5. M4-29 item 1 (this file's sidecar install step) is done;
-# items 2 and 3 (a real managed-identity node token, and the app-role IaC that grants it anything)
-# are not, and neither is a real hosting decision for sidecar_artifact_url. Until all three exist,
-# every tunnel is refused — see mina-sidecar.service's own comment for exactly why.
+# The Wazuh agent joins here in M3-5. M4-29 items 1 and 2 (the sidecar install step, and the
+# managed-identity token provider itself) are done; item 3 (the app-role IaC that actually grants
+# the VMSS's managed identity anything the control plane will accept) is not, and neither is a
+# real hosting decision for sidecar_artifact_url. Until both of those exist, every tunnel is
+# refused — see mina-sidecar.service's own comment for exactly why.

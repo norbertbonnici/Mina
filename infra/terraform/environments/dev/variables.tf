@@ -124,6 +124,25 @@ variable "sidecar_artifact_url" {
   }
 }
 
+variable "sidecar_managed_identity_scope" {
+  description = <<-EOT
+    The Entra scope the sidecar requests a token for using the VMSS's own system-assigned managed
+    identity (M4-29 item 2) -- typically "api://<control-plane app registration client id>/.default",
+    since the platform validates every caller (analysts and nodes alike) against one app
+    registration's audience (ARCHITECTURE §4). Defaults to "" (not set): with no scope configured
+    the sidecar falls back to a fixed development token instead, and that fallback itself refuses
+    to start outside Development unless explicitly allowed -- there is no silent path to an
+    unauthenticated node.
+
+    Even once this is set, the node still needs the Mina.Node and Mina.Node.<region> app roles
+    actually assigned to its managed identity's service principal before the control plane accepts
+    the resulting token (M4-29 item 3, not yet IaC'd anywhere in this repo) -- setting this
+    variable alone does not make the node authenticate successfully.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "export_activity_log" {
   description = <<-EOT
     Export the subscription's Activity Log to the diagnostics workspace (M4-26). Needs rights at the
