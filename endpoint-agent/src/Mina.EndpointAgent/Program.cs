@@ -61,9 +61,20 @@ builder.Services.AddSingleton<TrayControlService>();
 builder.Services.AddSingleton<ITrayControl>(sp => sp.GetRequiredService<TrayControlService>());
 builder.Services.AddSingleton<ISessionControl>(sp => sp.GetRequiredService<ResearchSessionManager>());
 
-// PoC peer check: loopback only. Verifying the connecting process is the managed research browser
-// is Windows-specific and lands with M2-4 (THREAT_MODEL B1).
-builder.Services.AddSingleton<IPeerAuthorizer, LoopbackPeerAuthorizer>();
+// Peer check (M2-4, THREAT_MODEL B1): verifies the connecting process is the managed research
+// browser, by image path and its dedicated profile directory, resolved from the live TCP
+// connection table -- Windows-specific, so this agent's actual production path (it deploys and
+// runs only on Windows) gets the real control, and anything else (the cross-platform "dotnet"
+// build/test path this project also supports) keeps the loopback-only stand-in rather than fail
+// to start entirely over an OS check nothing in that path needs to pass.
+if (OperatingSystem.IsWindows())
+{
+    builder.Services.AddSingleton<IPeerAuthorizer, WindowsPeerAuthorizer>();
+}
+else
+{
+    builder.Services.AddSingleton<IPeerAuthorizer, LoopbackPeerAuthorizer>();
+}
 
 builder.Services.AddHostedService<ProtectedPathWorker>();
 

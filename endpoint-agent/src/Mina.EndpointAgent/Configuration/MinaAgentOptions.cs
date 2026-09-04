@@ -58,6 +58,14 @@ public sealed class MinaAgentOptions
 
     /// <summary>Settings for the pipe the per-user tray connects on.</summary>
     public TrayPipeOptions TrayPipe { get; set; } = new();
+
+    /// <summary>
+    /// The research browser instance this agent's loopback proxy will admit (M2-4, THREAT_MODEL
+    /// B1). Values must match <c>edge-integration/research-browser-flags.json</c> exactly — that
+    /// file is what the agent launches the browser with, this is what it checks a connecting peer
+    /// against, and a mismatch between the two silently admits nothing or admits the wrong thing.
+    /// </summary>
+    public ResearchBrowserOptions ResearchBrowser { get; set; } = new();
 }
 
 /// <summary>The local IPC surface the tray uses (ARCHITECTURE §3.1).</summary>
@@ -74,4 +82,28 @@ public sealed class TrayPipeOptions
     /// of spares absorbs reconnects without giving a local process many sockets to hold open.
     /// </summary>
     public int Instances { get; set; } = 4;
+}
+
+/// <summary>
+/// Identifies the one process the loopback proxy will serve. Both fields together, not either
+/// alone: M1-5 found live that a WFP rule scoped to an image path alone still admits a second,
+/// differently-profiled instance of that same binary, which is exactly the "ride the tunnel"
+/// attack THREAT_MODEL B1 describes — the profile directory is what tells two instances of the
+/// same browser apart.
+/// </summary>
+public sealed class ResearchBrowserOptions
+{
+    /// <summary>
+    /// Full path to the research browser's executable (ADR-0001 variant C2 — a second Edge
+    /// installation at its own path, e.g. Edge Beta). Must match
+    /// <c>research-browser-flags.json</c>'s <c>researchBrowser.imagePath</c> exactly.
+    /// </summary>
+    public string ImagePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The dedicated research profile directory the agent launches the browser with
+    /// (<c>--user-data-dir</c>). Must match what actually gets passed at launch — this is checked
+    /// against the connecting process's own command line, not assumed from configuration alone.
+    /// </summary>
+    public string ProfileDirectory { get; set; } = string.Empty;
 }
