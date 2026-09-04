@@ -128,6 +128,42 @@ supply-chain attacker. Added: **research target performing counter-surveillance*
 - **D:** Arc agent failure removes SQL authentication and Key Vault access at once, with no stored
   credential to fall back on by design. Fails closed; OPERATIONS runbook.
 
+### B10. Administration workstation ↔ every plane
+
+Added 2026-09-04. The machine an administrator works from holds, at the same time, the SSH key
+that is `root` on the Proxmox host and `mina-admin` on the control-plane VMs, an authenticated
+Azure session for the subscription holding the CA signing key and the audit anchors, and the
+credentials for the Terraform state. **No component modelled above holds credentials for all three
+planes at once**, which makes this the shortest path to the platform's most sensitive assets — and
+it was not modelled at all until a permissions failure surfaced it by accident (M4-30). The
+boundary is a property of the administrative role, not of one machine: it applies to whichever
+host an administrator actually uses, in the lab today and in FIAU operations later.
+
+- **E:** code executing as the administrator inherits hypervisor, control-plane and subscription
+  authority in a single step — it does not cross the boundaries above, it starts inside all of
+  them. *Mitigate:* general endpoint hygiene only. There is no platform-specific control today,
+  and saying so plainly is the point of this entry. *Test:* none; M4-30 carries the decision on
+  what separation to require.
+- **T:** the same session applies Terraform and runs the CA bootstrap tool, so it can both change
+  infrastructure and, holding Secrets Officer on the vault, re-root the internal CA. D-20 stops the
+  *API* from re-rooting the platform; it does not constrain the operator, and was never intended
+  to. *Mitigate:* CA key use and secret access are recorded in Log Analytics (M4-24), so a re-root
+  is detectable after the fact rather than prevented. *Test:* alert drill on a CA certificate
+  write.
+- **E (third-party code on the same host):** self-hosted CI runners for unrelated repositories ran
+  on this workstation, and the runner installer grants its service account FullControl over the
+  administrator's whole profile — so a workflow change in a repository having nothing to do with
+  Mina could read the hypervisor root key and live Azure tokens for this platform's subscription.
+  Found and fixed 2026-09-04 (M4-30): runner relocated out of the profile, profile grant removed,
+  key ACL tightened. Note it surfaced only because OpenSSH refuses a key with loose permissions —
+  nothing checks the token store, so that half would not have announced itself. *Mitigate:* keep
+  third-party CI off administration hosts, or hold platform credentials somewhere CI cannot reach.
+  *Test:* assert no principal outside owner/SYSTEM/Administrators can read the credential stores.
+- **R:** actions taken here appear as the administrator or the host's Arc identity, so attribution
+  reaches a role and a machine rather than a person. *Mitigate:* audit anchors are in write-once
+  Azure storage (D-18), so even this principal cannot rewrite history undetectably; ARM-level
+  tamper still needs the subscription activity-log export (M4-26).
+
 ## 5. Required scenarios (baseline retained, responses updated to the design)
 
 | Threat | Design response |
