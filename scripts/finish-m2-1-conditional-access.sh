@@ -4,12 +4,35 @@
 # §4. The app registration, app roles, and group assignments (the FIRST half of M2-1) are already
 # done and verified as of 2026-09-03 -- see project memory / the morning decision log for details.
 #
-# NOT run automatically overnight, on purpose: this needs two things only a human can supply --
+# BLOCKED in this lab tenant as of 2026-09-04, confirmed conclusively, not a permissions problem:
+# this tenant's only license (DEVELOPERPACK -- the M365 E5 Developer Program's collaboration
+# bundle: Exchange, SharePoint, Teams, Forms, etc.) contains ZERO Entra ID Premium P1 or P2 service
+# plans. Every Conditional Access WRITE fails identically with "Your tenant is not licensed for
+# this feature" (403) -- both the authentication-context PATCH and a completely plain,
+# app-targeted policy POST with no auth-context binding at all. This was tested with a token that
+# actually had the right scope (see below), signed in by Norbert himself, so it is not a consent or
+# role problem -- reads work fine (listing authentication contexts returns 200), writes are the
+# wall. Likely lab-only: a real organizational M365 tenant conventionally includes at least P1.
+# Revisit this script once this deploys against a tenant that actually has Entra ID P1/P2, or once
+# this lab tenant's license is upgraded -- the script itself should still be correct as written.
 #
-#   1. A fresh az CLI sign-in requesting the Policy.ReadWrite.ConditionalAccess scope. The
-#      existing cached session (from this session's earlier device-code sign-ins) does not carry
-#      this scope and Entra refuses to mint it silently (AADSTS65002 -- "consent... must be
-#      configured via preauthorization"), confirmed by direct test.
+# Getting the required scope onto a token at all needs two things only a human can supply --
+#
+#   1. A fresh sign-in requesting the Policy.ReadWrite.ConditionalAccess scope. Two more things
+#      worth knowing here, both confirmed by direct test, not assumed:
+#      - `az login --scope ...` does NOT work for this specific scope, even freshly, even with a
+#        real human completing the device code: AADSTS65002, "consent between first party
+#        application [Azure CLI] and first party resource [Graph] must be configured via
+#        preauthorization" -- Microsoft's own Azure CLI app is not preauthorized for
+#        Policy.ReadWrite.ConditionalAccess in any tenant, this is not tenant-specific.
+#      - The workaround: request a device code directly (not via `az login`) against Microsoft
+#        Graph PowerShell's own well-known client ID (14d82eec-204b-4c2f-b7e8-296a70dab67e), which
+#        IS preauthorized for this scope -- this is the client ID Microsoft's own documented
+#        Connect-MgGraph pattern uses for exactly this kind of admin scenario. Use the resulting
+#        access_token directly via `curl -H "Authorization: Bearer $TOKEN"` against Graph, not
+#        `az rest` (which always uses the az CLI's own cached, differently-scoped token) and not
+#        Connect-MgGraph itself (its interactive device-code display breaks under output
+#        redirection in this specific harness -- see feedback memory).
 #   2. A deliberate decision on enforcement mode. This script creates the policy in
 #      "enabledForReportingButNotEnforced" (Report-only) -- Microsoft's own recommended rollout
 #      practice for a new CA policy, and the right default for something created unattended
@@ -20,7 +43,11 @@
 #      the class of change CLAUDE.md requires a human decision for ("weakening OR changing
 #      Conditional Access... device-compliance requirements").
 #
-# Run this after signing in fresh:
+# This script still uses `az rest`, which will need updating to the raw-token approach above once
+# there's a licensed tenant to actually run it against -- left as `az rest` for now since it reads
+# more clearly and the blocker is the license, not this script's own mechanics.
+#
+# Run this after signing in fresh (see the caveat above -- this exact command does not work today):
 #   az login --scope "https://graph.microsoft.com/Policy.ReadWrite.ConditionalAccess" \
 #            --scope "https://graph.microsoft.com/Policy.Read.All"
 #   ./scripts/finish-m2-1-conditional-access.sh
