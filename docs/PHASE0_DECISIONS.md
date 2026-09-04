@@ -237,3 +237,9 @@ signature. The `--replace` guard was confirmed by re-running the bootstrap and b
 live control plane still runs the development CA until its deployment sets `Mina:Pki:KeyVaultUri` —
 which is safe to do at any time, because no egress node currently holds a trust root at all
 (BACKLOG M2-2d).
+
+**In service on the live control plane 2026-09-04.** The on-premises API was redeployed with
+`Mina:Pki:KeyVaultUri` set and now loads the CA at startup as its own Azure Arc managed identity
+(`mina-dev-cp-app`) — `KeyGet` then `SecretGet` in the vault's diagnostics, no credential stored on
+the host. D-18's "reached outbound from the Arc-enabled control-plane hosts using their Arc managed
+identity" is, from this point, something the platform does rather than something it intends.
