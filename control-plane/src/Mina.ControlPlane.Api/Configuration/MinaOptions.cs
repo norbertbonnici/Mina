@@ -48,6 +48,13 @@ public sealed class MinaPkiOptions
     /// <summary>Secret holding the CA certificate, written once by <c>mina-ca bootstrap</c>.</summary>
     public string CertificateSecretName { get; init; } = KeyVaultCaOptions.DefaultCertificateSecretName;
 
+    /// <summary>
+    /// How long an egress node's own server certificate is valid for (M2-2d). Fixed rather than
+    /// client-chosen — a node has no renewal loop of its own yet, unlike a session; rotation is
+    /// M4-2. 90 days is a starting point, not a validated production value.
+    /// </summary>
+    public TimeSpan NodeCertificateLifetime { get; init; } = TimeSpan.FromDays(90);
+
     public bool IsConfigured => !string.IsNullOrWhiteSpace(KeyVaultUri);
 
     /// <summary>Validates and converts to the vault-side options, or throws with what is wrong.</summary>

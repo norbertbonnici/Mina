@@ -1,6 +1,12 @@
 using Mina.ControlPlane.Application.Telemetry;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using Microsoft.Extensions.Options;
+using Mina.ControlPlane.Api.Configuration;
+using Mina.ControlPlane.Api.Infrastructure;
 using Mina.ControlPlane.Domain.Regions;
+using Mina.ControlPlane.Pki;
 using Mina.Observability;
 
 using Mina.ControlPlane.Hosting;
@@ -8,6 +14,16 @@ using Mina.ControlPlane.Hosting;
 namespace Mina.ControlPlane.Api.Sessions;
 
 public sealed record NodeSessionDto(Guid SessionId, bool Suppressed, DateTimeOffset LeaseExpiresAt);
+
+/// <summary>Response to a node's server-certificate request (M2-2d).</summary>
+/// <param name="CertificatePem">The signed server certificate, PEM, no private key.</param>
+/// <param name="CaCertificatePem">
+/// The CA's own public certificate, PEM. Handed back here rather than fetched by the node
+/// separately from Key Vault: the node already holds an authenticated channel to this API, so
+/// reusing it avoids granting every node's managed identity Key Vault read access just to learn a
+/// certificate that is public material to begin with.
+/// </param>
+public sealed record NodeCertificateDto(string CertificatePem, string CaCertificatePem);
 
 public sealed record TelemetryItemDto(
     Guid SessionId,
@@ -96,6 +112,70 @@ public static class NodeEndpoints
             return Results.Ok(new TelemetryAcceptedDto(
                 result.Recorded, result.Aggregated, result.Unattributable, result.SuppressionMismatches,
                 result.Rejected));
+        });
+
+        // M2-2d: the last thing standing between a booted node and one that actually serves
+        // tunnels. A node generates its own key pair and CSR (the private key never reaches this
+        // process) and authenticates the request the same way it authenticates everything else —
+        // its own managed identity, region-granted. The SAN is this region's own configured
+        // ServerName, never the requester's: a compromised node asking for a certificate naming
+        // some other Mina host is refused by construction, not by policy.
+        group.MapPost("/{region}/certificate", async (
+            string region, HttpRequest request, ClaimsPrincipal node,
+            NodeCertificateIssuer issuer, ICertificateAuthorityProvider caProvider,
+            IOptions<MinaEgressOptions> egressOptions, TimeProvider clock, CancellationToken ct) =>
+        {
+            if (!RegionName.IsWellFormed(region))
+            {
+                return Results.Problem(
+                    "A well-formed region is required.", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (!NodeRegionGrant.IsGrantedFor(node, region))
+            {
+                return Results.Problem(
+                    $"This node is not granted region '{region}'.", statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            if (!egressOptions.Value.Regions.TryGetValue(region, out var egress)
+                || string.IsNullOrWhiteSpace(egress.ServerName))
+            {
+                return Results.Problem(
+                    $"No egress ingress is configured for region '{region}' "
+                    + $"(Mina:Egress:Regions:{region}:ServerName).",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            using var body = new MemoryStream();
+            await request.Body.CopyToAsync(body, ct);
+            var csr = body.ToArray();
+            if (csr.Length == 0)
+            {
+                return Results.Problem(
+                    "A PKCS#10 certificate signing request body is required.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            X509Certificate2 certificate;
+            try
+            {
+                certificate = issuer.IssueFromCsr(csr, [egress.ServerName], [], clock.GetUtcNow());
+            }
+            catch (CryptographicException)
+            {
+                // Malformed, or a signature that does not verify against the requester's own
+                // claimed key — either way this is not a request this CA will act on.
+                return Results.Problem(
+                    "The certificate signing request could not be verified.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            using (certificate)
+            using (var caCertificate = caProvider.GetAuthority().PublicCertificate)
+            {
+                return Results.Ok(new NodeCertificateDto(
+                    certificate.ExportCertificatePem(), caCertificate.ExportCertificatePem()));
+            }
         });
 
         return app;

@@ -217,4 +217,103 @@ public sealed class NodeApiTests(MinaApiFactory factory) : IClassFixture<MinaApi
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    private static async Task<HttpResponseMessage> RequestCertificateAsync(
+        HttpClient node, string region, byte[]? csrDer = null)
+    {
+        using var content = new ByteArrayContent(csrDer ?? NewCsrDer());
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        return await node.PostAsync(new Uri($"/api/nodes/{region}/certificate", UriKind.Relative), content);
+    }
+
+    private static byte[] NewCsrDer()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        return new CertificateRequest("CN=mina-node", key, HashAlgorithmName.SHA256).CreateSigningRequest();
+    }
+
+    [Fact]
+    public async Task An_analyst_cannot_request_a_node_certificate()
+    {
+        var response = await RequestCertificateAsync(Client("oid-cert-analyst", "Mina.Analyst"), "westeurope");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Anonymous_callers_cannot_request_a_node_certificate()
+    {
+        using var content = new ByteArrayContent(NewCsrDer());
+        var response = await _factory.CreateClient().PostAsync(
+            new Uri("/api/nodes/westeurope/certificate", UriKind.Relative), content);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_node_cannot_request_a_certificate_for_a_region_it_was_not_granted()
+    {
+        var response = await RequestCertificateAsync(
+            Client("oid-cert-wrongregion", "Mina.Node,Mina.Node.westeurope"), "northeurope");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_region_with_no_configured_egress_ingress_refuses_the_certificate_request()
+    {
+        // northeurope is approved (AC-008) but has no Mina:Egress:Regions entry in test config --
+        // there is no ServerName to put in the SAN, so there is nothing safe to sign.
+        var response = await RequestCertificateAsync(
+            Client("oid-cert-noegress", "Mina.Node,Mina.Node.northeurope"), "northeurope");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_empty_request_body_is_a_bad_request()
+    {
+        var response = await RequestCertificateAsync(
+            Client("oid-cert-empty", "Mina.Node,Mina.Node.westeurope"), "westeurope", csrDer: []);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_tampered_csr_is_refused()
+    {
+        var csr = NewCsrDer();
+        csr[^1] ^= 0xFF;
+
+        var response = await RequestCertificateAsync(
+            Client("oid-cert-tampered", "Mina.Node,Mina.Node.westeurope"), "westeurope", csr);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_granted_node_gets_a_certificate_bearing_the_regions_configured_server_name_and_chaining_to_the_ca()
+    {
+        var response = await RequestCertificateAsync(
+            Client("oid-cert-westeurope", "Mina.Node,Mina.Node.westeurope"), "westeurope");
+        response.EnsureSuccessStatusCode();
+
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        using var leaf = X509Certificate2.CreateFromPem(body.GetProperty("certificatePem").GetString());
+        using var ca = X509Certificate2.CreateFromPem(body.GetProperty("caCertificatePem").GetString());
+
+        Assert.False(leaf.HasPrivateKey); // the key stayed with this test, which generated the CSR
+
+        var eku = leaf.Extensions.OfType<X509EnhancedKeyUsageExtension>().Single();
+        Assert.Contains(eku.EnhancedKeyUsages.Cast<Oid>(), oid => oid.Value == "1.3.6.1.5.5.7.3.1"); // serverAuth
+
+        var san = leaf.Extensions.OfType<X509SubjectAlternativeNameExtension>().Single().Format(false);
+        Assert.Contains("westeurope.egress.mina", san, StringComparison.Ordinal);
+
+        using var chain = new X509Chain();
+        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        chain.ChainPolicy.CustomTrustStore.Add(ca);
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        Assert.True(chain.Build(leaf));
+    }
 }

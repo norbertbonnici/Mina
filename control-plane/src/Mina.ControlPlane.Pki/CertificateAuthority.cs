@@ -252,6 +252,72 @@ public sealed class CertificateAuthority : IDisposable
     }
 
     /// <summary>
+    /// Signs a PKCS#10 certificate signing request generated on an egress node, returning a server
+    /// certificate (public only — the private key stays with the node, the same guarantee
+    /// <see cref="SignClientCertificateRequest"/> gives session certificates). The CSR signature is
+    /// verified, proving the node holds the corresponding private key; the CSR's own requested
+    /// extensions are ignored and the CA sets serverAuth EKU, key usage and the SAN itself. The SAN
+    /// is never taken from the requester — it is exactly the discipline
+    /// <see cref="SignClientCertificateRequest"/> applies to the session SAN, and matters more here:
+    /// a server certificate for a name of the requester's choosing is what a compromised node could
+    /// use to impersonate any other Mina host under this CA, not just itself.
+    /// </summary>
+    public X509Certificate2 SignServerCertificateRequest(
+        byte[] pkcs10Request,
+        IEnumerable<string> dnsNames,
+        IEnumerable<IPAddress> ipAddresses,
+        DateTimeOffset notBefore,
+        TimeSpan lifetime)
+    {
+        ArgumentNullException.ThrowIfNull(pkcs10Request);
+        ArgumentNullException.ThrowIfNull(dnsNames);
+        ArgumentNullException.ThrowIfNull(ipAddresses);
+        RequirePositive(lifetime, "Certificate lifetime must be positive.");
+
+        // Verifies the CSR self-signature; throws if the requester does not hold the private key.
+        var request = CertificateRequest.LoadSigningRequest(
+            pkcs10Request,
+            _signatureDigest,
+            CertificateRequestLoadOptions.Default);
+
+        request.CertificateExtensions.Clear();
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, critical: true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, critical: true));
+        request.CertificateExtensions.Add(
+            new X509EnhancedKeyUsageExtension([OidClientOrServer.ServerAuth], critical: false));
+        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, critical: false));
+
+        var san = new SubjectAlternativeNameBuilder();
+        var any = false;
+        foreach (var dns in dnsNames)
+        {
+            san.AddDnsName(dns);
+            any = true;
+        }
+
+        foreach (var ip in ipAddresses)
+        {
+            san.AddIpAddress(ip);
+            any = true;
+        }
+
+        if (any)
+        {
+            request.CertificateExtensions.Add(san.Build());
+        }
+
+        var effectiveNotBefore = notBefore < _signingCertificate.NotBefore.ToUniversalTime()
+            ? _signingCertificate.NotBefore.ToUniversalTime()
+            : notBefore;
+        var serial = RandomNumberGenerator.GetBytes(16);
+
+        // No CopyWithPrivateKey: the returned certificate carries only the public key.
+        return request.Create(
+            _signingCertificate.SubjectName, _generator, effectiveNotBefore, ClampNotAfter(notBefore + lifetime), serial);
+    }
+
+    /// <summary>
     /// The extensions that make a certificate this platform's CA, applied identically whether the
     /// key signing it is local or in a vault.
     /// </summary>

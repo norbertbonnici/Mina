@@ -8,12 +8,15 @@
 # It used to be the literal string "# placeholder", waiting for a deployment pipeline that does not
 # exist, which meant a booted node could never have served traffic.
 #
-# TLS material is NOT baked into the image. In production the node fetches its server certificate
-# and the internal CA from Key Vault using the VMSS managed identity — still TODO, M2-2d. M2-2c
-# built the CA itself (the vault now holds a real signing key and a real CA certificate); what it
-# did not build is this side of it, the node's fetch and its own server certificate's issuance. For
-# the M1 lab the certs are provisioned out of band into /etc/mina/tls. The CA private key never
-# reaches the node: it holds its own server certificate and the CA's public certificate only.
+# TLS material is NOT baked into the image (M2-2d). The node generates its own key pair, sends a
+# CSR to the control plane's node API (POST /api/nodes/{region}/certificate) authenticated with its
+# own managed identity, and gets back a signed server certificate plus the CA's own public
+# certificate in the same response -- not a separate Key Vault fetch, deliberately: the node
+# already holds an authenticated channel to the control plane, and reusing it means no node's
+# managed identity ever needs Key Vault access at all to learn a certificate that is public
+# material to begin with. The CA private key never reaches the node, and neither does the SAN it
+# gets issued with -- that comes from the control plane's own configured ServerName for this
+# region, not from anything the node asks for.
 
 # A real, empirically-found bug (2026-09-04, discovered inspecting a live node via
 # `az vmss run-command invoke` -- the first time anything actually checked what cloud-init did on
@@ -39,6 +42,9 @@ packages:
   # exactly the kind of parsing where a silent format-change breakage should fail loudly, not
   # match something unintended.
   - jq
+  # Generates the node's own key pair and CSR in mina-fetch-certs.sh (M2-2d). Normally already on
+  # the base image; listed explicitly rather than assumed, the same discipline jq gets above.
+  - openssl
 
 groups:
   - mina-tls
@@ -219,13 +225,54 @@ write_files:
     owner: "root:root"
     content: |
       #!/usr/bin/env bash
+      # M2-2d. Fails closed by construction: set -e means any step failing (no token, the control
+      # plane refusing the request, a malformed response) exits non-zero, which fails this unit,
+      # which mina-envoy.service Requires= -- Envoy never starts without material this run produced.
       set -euo pipefail
       install -d -m 0750 -o root -g mina-tls /etc/mina/tls
-      # TODO(M2-2d): fetch the server certificate/key and the CA public certificate from Key Vault
-      # using the VMSS managed identity. Fail closed — if the fetch fails the unit fails, and Envoy
-      # never starts, so the node cannot serve without valid, current material.
-      #   token=$(curl -s -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net")
-      #   ... az keyvault secret download ...
+
+      # The node's own key pair and CSR. The private key is written straight to its final home and
+      # never transmitted anywhere -- the CSR (public key only) is the only part that leaves.
+      openssl ecparam -name prime256v1 -genkey -noout -out /etc/mina/tls/server.key
+      csr="$(mktemp)"
+      trap 'rm -f "$${csr}"' EXIT
+      openssl req -new -key /etc/mina/tls/server.key -subj "/CN=mina-egress-node" -outform DER -out "$${csr}"
+
+      # A managed-identity token for the control plane's own app registration -- the same audience
+      # the sidecar authenticates to, acquired the bare-client-id way IMDS expects (v1-style
+      # resource parameter; Azure.Identity does the v2-scope-to-v1-resource translation itself for
+      # the sidecar's own .NET token acquisition, but this is a raw IMDS call in bash).
+      token_response="$(curl -fsSL -H "Metadata:true" \
+        "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${mina_app_client_id}")"
+      token="$(echo "$${token_response}" | jq -r '.access_token')"
+      if [ -z "$${token}" ] || [ "$${token}" = "null" ]; then
+        echo "could not acquire a managed-identity token for the control plane -- is this VMSS's identity actually granted the Mina.Node role?" >&2
+        exit 1
+      fi
+
+      # Submit the CSR, get back a signed server certificate and the CA's own public certificate in
+      # one response -- see the file header for why this is not a separate Key Vault fetch.
+      response="$(curl -fsSL --retry 3 --retry-delay 5 \
+        -H "Authorization: Bearer $${token}" \
+        -H "Content-Type: application/octet-stream" \
+        --data-binary "@$${csr}" \
+        "${control_plane_node_url}/api/nodes/${region}/certificate")"
+
+      # jq -r against a missing or null field prints the literal text "null", which is non-empty --
+      # test -s on the file it was written to would pass on garbage. Require both fields to
+      # actually be present and be a PEM block, not just present-and-non-empty-file.
+      certificate_pem="$(echo "$${response}" | jq -r '.certificatePem // empty')"
+      ca_certificate_pem="$(echo "$${response}" | jq -r '.caCertificatePem // empty')"
+      case "$${certificate_pem}" in "-----BEGIN CERTIFICATE-----"*) ;; *)
+        echo "control plane did not return a certificatePem: $${response}" >&2; exit 1 ;;
+      esac
+      case "$${ca_certificate_pem}" in "-----BEGIN CERTIFICATE-----"*) ;; *)
+        echo "control plane did not return a caCertificatePem: $${response}" >&2; exit 1 ;;
+      esac
+
+      printf '%s\n' "$${certificate_pem}" > /etc/mina/tls/server.crt
+      printf '%s\n' "$${ca_certificate_pem}" > /etc/mina/tls/ca.crt
+
       test -s /etc/mina/tls/server.crt
       test -s /etc/mina/tls/server.key
       test -s /etc/mina/tls/ca.crt

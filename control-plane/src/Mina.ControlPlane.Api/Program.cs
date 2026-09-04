@@ -151,6 +151,15 @@ builder.Services.AddSingleton(sp =>
     return new SessionCertificateIssuer(authority, new SessionCertificatePolicy(ttl));
 });
 
+// A node's own server certificate (M2-2d) — the same CA, a different leaf shape (serverAuth, no
+// client-chosen TTL). Shares whichever ICertificateAuthorityProvider was registered above, Key
+// Vault-backed or the Development stand-in.
+builder.Services.AddSingleton(sp =>
+{
+    var authority = sp.GetRequiredService<ICertificateAuthorityProvider>().GetAuthority();
+    return new NodeCertificateIssuer(authority, pkiOptions.NodeCertificateLifetime);
+});
+
 builder.Services.AddScoped<SessionService>();
 
 // Sensitive-session (suppression) workflow — ADR-0003. Options bound above.

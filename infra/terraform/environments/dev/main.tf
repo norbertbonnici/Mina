@@ -78,6 +78,13 @@ module "egress_stamp" {
     sidecar_version      = var.sidecar_version
     sidecar_sha256       = var.sidecar_sha256
     sidecar_artifact_url = var.sidecar_artifact_url
+    # M2-2d: mina-fetch-certs.sh needs these directly rather than parsed back out of sidecar_env
+    # below, the same reason every other script here (envoy_version, sidecar_version, ...) gets its
+    # own named variable instead of scraping another rendered file -- explicit inputs, not a second
+    # file this one depends on having already been written correctly.
+    region                 = var.egress_region
+    control_plane_node_url = var.control_plane_node_url
+    mina_app_client_id     = var.mina_app_client_id
     # Built here rather than with an inline %{ if ~} inside the YAML content block: Terraform's
     # ~ trim markers only strip whitespace immediately adjacent to the directive tag itself, not
     # the following line's own leading indentation (needed for the YAML content: | block to stay
