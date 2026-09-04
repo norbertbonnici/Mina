@@ -93,6 +93,36 @@ resource "azurerm_role_assignment" "deployer_crypto_officer" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+# The CA certificate lives beside the key as a secret, because Key Vault's own certificate objects
+# are always end-entity (basic constraints cA=false) and so cannot be a CA certificate. Writing it
+# is `mina-ca bootstrap`, run once by an operator with this identity — not by the control plane,
+# which is deliberately given no way to mint itself a new root of trust.
+resource "azurerm_role_assignment" "deployer_secrets_officer" {
+  scope                = azurerm_key_vault.cp.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# The running control plane's own two roles: sign with the CA key, read the CA certificate. Neither
+# lets it export the key (no role does — the key is not exportable) and neither lets it write the
+# certificate, so re-rooting the platform stays an operator action. Created only once the hosts have
+# an Arc identity to grant them to (M4-18).
+resource "azurerm_role_assignment" "control_plane_crypto_user" {
+  count = var.control_plane_principal_id == "" ? 0 : 1
+
+  scope                = azurerm_key_vault.cp.id
+  role_definition_name = "Key Vault Crypto User"
+  principal_id         = var.control_plane_principal_id
+}
+
+resource "azurerm_role_assignment" "control_plane_secrets_user" {
+  count = var.control_plane_principal_id == "" ? 0 : 1
+
+  scope                = azurerm_key_vault.cp.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = var.control_plane_principal_id
+}
+
 # Created in the vault, so the private material is generated there and never exists in Terraform
 # state or on any operator's machine. P-256 matches the curve the PKI issues with
 # (Mina.ControlPlane.Pki uses ECDsa nistP256).

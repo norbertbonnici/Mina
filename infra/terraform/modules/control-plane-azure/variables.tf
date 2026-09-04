@@ -135,3 +135,19 @@ variable "alert_webhook_uri" {
   type        = string
   default     = null
 }
+
+variable "control_plane_principal_id" {
+  description = <<-EOT
+    Object id of the on-premises control plane's own identity — its Azure Arc system-assigned
+    managed identity (D-17/D-18). Granted the two data-plane roles the internal CA needs: Key Vault
+    Crypto User to sign with the CA key, and Key Vault Secrets User to read the CA certificate
+    stored beside it (M2-2c).
+
+    Empty until the control-plane hosts are Arc-onboarded (BACKLOG M4-18); with no principal there
+    is nothing to grant, and the API cannot use the Key Vault CA until there is. The bootstrap tool
+    and an operator's own `az login` are unaffected — those are covered by the deployer role
+    assignments this module makes.
+  EOT
+  type        = string
+  default     = ""
+}

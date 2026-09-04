@@ -28,6 +28,19 @@ output "alerting_enabled" {
   value       = length(var.alert_email_receivers) > 0 || var.alert_webhook_uri != null
 }
 
+output "ca_signing_key_name" {
+  description = "Signing key name (Mina:Pki:SigningKeyName; the API defaults to this value)."
+  value       = azurerm_key_vault_key.ca_signing.name
+}
+
+output "control_plane_key_vault_access_granted" {
+  description = <<-EOT
+    Whether the control plane's own identity can actually use the CA. False means no principal was
+    supplied (M4-18 not done), so the Key Vault CA is reachable by an operator but not by the API.
+  EOT
+  value       = var.control_plane_principal_id != ""
+}
+
 output "control_plane_audit_storage_access_granted" {
   description = <<-EOT
     Whether the control plane's own identity can write and read audit exports. False means no

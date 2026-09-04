@@ -193,3 +193,47 @@ byte-flow checks) stays green — the change does not disturb ordinary tunnel op
   unchanged. See ARCHITECTURE §4/§5, `EnvoySessionAdmissionTests` for the real-Envoy test proving the
   cap resets an open tunnel's stream on age alone, session still admitted throughout — verified
   green against a real Envoy 2026-09-04 (BACKLOG M4-11).
+
+## D-20: where the internal CA's certificate lives, and who may create it (M2-2c)
+
+D-18 settled that the CA *signing key* stays in Azure Key Vault. Implementing it surfaced a
+question D-18 did not answer: a signing key is not a certificate authority. Something has to hold
+the CA certificate — the self-signed document that says this key may sign certificates — and
+something has to create it in the first place. Key Vault cannot: its own certificate objects are
+always end-entity (basic constraints assert cA=false), so the one thing that cannot be stored as a
+Key Vault *certificate* is a CA certificate.
+
+**Decision (2026-09-04): the CA certificate is a Key Vault secret beside the key, and only an
+operator can write it.**
+
+- **Stored as a secret** (`mina-internal-ca-certificate`, PEM) in the same vault as the signing key
+  (`mina-internal-ca`). It is public material — every egress node and endpoint holds a copy as its
+  trust root — so the secret's value is integrity, not confidentiality: one RBAC-controlled,
+  diagnostics-logged place that already has the right consumers pointed at it. The alternative,
+  shipping the certificate as a file alongside the application, would have put the trust root in
+  configuration management with no record of who changed it.
+- **Created by an operator tool, not by the control plane.** `mina-ca bootstrap`
+  (`control-plane/tools/Mina.Ca`) drives a self-signing request through the vault's sign operation
+  and writes the result. The running API is granted Key Vault *Crypto User* and *Secrets User* — it
+  can sign and it can read, and it can do neither of the two things that would let it change what
+  the platform trusts. A service that can mint its own root of trust can replace the root of trust,
+  and avoiding one operator command is not worth that.
+- **Refuses to overwrite.** Replacing the certificate is a CA rollover (M4-2), not a bootstrap:
+  every certificate issued under the old root stops validating the moment nodes reload. The tool
+  requires `--replace` to do it and says so.
+- **The version is pinned.** The signer binds to the versioned key identifier, so rotating the key
+  in the vault does not silently change what signs — the certificate/key match check fails at
+  startup instead, which is the loud version of the same event.
+
+**What this does not decide:** the CA's lifetime (5 years by default, an argument to the tool, not
+yet an owner decision), and how the certificate reaches egress nodes — `mina-fetch-certs.sh` still
+has no implementation, and the Envoy *server* certificate it also needs has no issuance path yet.
+Both belong with M4-2 and the node-provisioning work, not here.
+
+**Bootstrapped in dev 2026-09-04**, against `kv-mina-dev-spc-cp`: the CA certificate exists in the
+vault (`CN=Mina Internal CA`, SHA-256 `D5CE4EE5…B8F4E0`, valid to 2031-09-03), a session certificate
+issued from a real CSR verifies against it with OpenSSL, and the vault's diagnostics record every
+signature. The `--replace` guard was confirmed by re-running the bootstrap and being refused. The
+live control plane still runs the development CA until its deployment sets `Mina:Pki:KeyVaultUri` —
+which is safe to do at any time, because no egress node currently holds a trust root at all
+(BACKLOG M2-2d).

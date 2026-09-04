@@ -17,6 +17,11 @@ module "control_plane_azure" {
 
   control_plane_egress_cidrs = var.control_plane_egress_cidrs
 
+  # The API's own identity, so it can sign with the CA key and read the CA certificate (M2-2c).
+  # Empty here until the control-plane hosts are Arc-onboarded (M4-18): on Proxmox there is no
+  # managed identity to grant until Arc supplies one.
+  control_plane_principal_id = var.control_plane_principal_id
+
   # Dev deliberately differs from production on both of these, and the difference is the point:
   # a software-protected key and an unlocked immutability policy are fine for a PoC and provide
   # none of the guarantees the design depends on. Production is premium + Locked (M4-19, M2-2c).

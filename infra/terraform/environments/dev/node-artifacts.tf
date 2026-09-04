@@ -1,7 +1,7 @@
 # M4-29's remaining gap: where the published sidecar binary is actually hosted for a booting node
 # to fetch (see sidecar_artifact_url's own comment). Azure Blob Storage, fetched using the node's
 # own system-assigned managed identity through IMDS -- the same mechanism mina-fetch-certs.sh
-# already sketches for TLS material (M2-2c, not yet built), applied here for real. Deliberately
+# already sketches for TLS material (M2-2d, not yet built), applied here for real. Deliberately
 # not a public container (the RBAC grant below is the actual access control, not obscurity) and
 # not a SAS token: a SAS has an expiry that would silently break a reimaged or later-added
 # instance with no warning until it tried to boot.

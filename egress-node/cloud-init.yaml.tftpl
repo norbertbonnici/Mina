@@ -9,9 +9,11 @@
 # exist, which meant a booted node could never have served traffic.
 #
 # TLS material is NOT baked into the image. In production the node fetches its server certificate
-# and the internal CA from Key Vault using the VMSS managed identity (still TODO — M2-2c); for the
-# M1 lab the certs are provisioned out of band into /etc/mina/tls. The CA private key never reaches
-# the node: it holds its own server certificate and the CA's public certificate only.
+# and the internal CA from Key Vault using the VMSS managed identity — still TODO, M2-2d. M2-2c
+# built the CA itself (the vault now holds a real signing key and a real CA certificate); what it
+# did not build is this side of it, the node's fetch and its own server certificate's issuance. For
+# the M1 lab the certs are provisioned out of band into /etc/mina/tls. The CA private key never
+# reaches the node: it holds its own server certificate and the CA's public certificate only.
 
 # A real, empirically-found bug (2026-09-04, discovered inspecting a live node via
 # `az vmss run-command invoke` -- the first time anything actually checked what cloud-init did on
@@ -158,7 +160,7 @@ write_files:
       # unlike Envoy there is no stable public release to template a URL from. Hosted in a
       # private Azure Storage container (M4-29, done 2026-09-04): the node authenticates with its
       # own managed identity through IMDS, the same mechanism mina-fetch-certs.sh sketches for
-      # Key Vault (M2-2c). No SAS token, no key -- ARCHITECTURE §4's "no client secrets anywhere
+      # Key Vault (M2-2d). No SAS token, no key -- ARCHITECTURE §4's "no client secrets anywhere
       # in the product" applies to fetching this binary exactly as it does everywhere else.
       set -euo pipefail
 
@@ -219,7 +221,7 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       install -d -m 0750 -o root -g mina-tls /etc/mina/tls
-      # TODO(M2-2c): fetch the server certificate/key and the CA public certificate from Key Vault
+      # TODO(M2-2d): fetch the server certificate/key and the CA public certificate from Key Vault
       # using the VMSS managed identity. Fail closed — if the fetch fails the unit fails, and Envoy
       # never starts, so the node cannot serve without valid, current material.
       #   token=$(curl -s -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net")

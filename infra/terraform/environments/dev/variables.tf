@@ -210,3 +210,17 @@ variable "control_plane_node_url" {
     error_message = "control_plane_node_url must be an https:// URL."
   }
 }
+
+variable "control_plane_principal_id" {
+  description = <<-EOT
+    Object id of the on-premises control plane's Azure Arc managed identity, granted Key Vault
+    Crypto User and Secrets User so the API can use the internal CA (M2-2c).
+
+    Empty until the control-plane hosts are Arc-onboarded (M4-18). While it is empty the Key Vault
+    CA can be bootstrapped and inspected by an operator (`mina-ca`, using their own credentials)
+    but the API cannot load it, so this environment's control plane still runs on the development
+    CA and says so at startup.
+  EOT
+  type        = string
+  default     = ""
+}

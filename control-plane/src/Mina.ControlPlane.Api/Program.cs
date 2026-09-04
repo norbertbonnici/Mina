@@ -7,8 +7,10 @@
 // and the filesystem audit sink remain available as development stand-ins, but a host that is not
 // Development now refuses to start on one rather than warning and carrying on: configuration is
 // hand-delivered to a VM now, so a missing setting is a likely mistake rather than an impossible
-// one. The Key Vault-backed CA is still M2-2c.
+// one. Configure Mina:Pki:KeyVaultUri and the CA's signing key is one Key Vault holds and will not
+// export (M2-2c).
 
+using Azure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
@@ -29,6 +31,7 @@ using Mina.ControlPlane.Domain.SensitiveSessions;
 using Mina.ControlPlane.Domain.Sessions;
 using Mina.ControlPlane.Domain.Telemetry;
 using Mina.ControlPlane.Hosting;
+using Mina.ControlPlane.KeyVault;
 using Mina.ControlPlane.Persistence;
 using Mina.ControlPlane.Pki;
 using Mina.Observability;
@@ -114,14 +117,26 @@ HostingGuard.RequireExplicitFallback(
     + "to the DMZ would publish the approvals UI and the audit read API with it",
     $"{MinaListenerOptions.Section}:NodePort and :ManagementPort");
 
-// The signing key for every session certificate. The Key Vault-backed provider is M2-2c; until it
-// exists there is no production-capable CA, and starting without one would mint session
-// certificates from a key that is regenerated on every restart.
-HostingGuard.RequireExplicitFallback(
-    allowDevelopmentFallbacks,
-    "an ephemeral in-process certificate authority whose key is regenerated on every restart",
-    "the Key Vault-backed certificate authority (backlog M2-2c)");
-builder.Services.AddSingleton<ICertificateAuthorityProvider, DevelopmentCertificateAuthorityProvider>();
+// The signing key for every session certificate (M2-2c). Configured: Key Vault holds the key, this
+// process holds only the certificate, and each issuance is a sign operation the vault performs and
+// records. Unconfigured: an ephemeral in-process key that is regenerated on every restart, which a
+// host that is not Development refuses to start on.
+var pkiOptions = builder.Configuration.GetSection(MinaPkiOptions.Section).Get<MinaPkiOptions>()
+    ?? new MinaPkiOptions();
+if (pkiOptions.IsConfigured)
+{
+    var keyVaultCa = pkiOptions.ToKeyVaultOptions();
+    builder.Services.AddSingleton<ICertificateAuthorityProvider>(
+        _ => KeyVaultCertificateAuthorityProvider.Create(keyVaultCa, new DefaultAzureCredential()));
+}
+else
+{
+    HostingGuard.RequireExplicitFallback(
+        allowDevelopmentFallbacks,
+        "an ephemeral in-process certificate authority whose key is regenerated on every restart",
+        $"{MinaPkiOptions.Section}:KeyVaultUri (the Key Vault-backed certificate authority)");
+    builder.Services.AddSingleton<ICertificateAuthorityProvider, DevelopmentCertificateAuthorityProvider>();
+}
 
 builder.Services.AddSingleton(sp =>
 {
@@ -206,7 +221,26 @@ if (usingInMemoryStore)
     StartupLog.UsingInMemorySessionStore(app.Logger);
 }
 
-StartupLog.UsingDevelopmentCertificateAuthority(app.Logger);
+// Resolving the provider is what reaches Key Vault, so doing it here rather than on the first
+// session request is the difference between a host that refuses to start and one that starts and
+// cannot issue a certificate. The subject and expiry go to the log because they are what an
+// operator needs to tell one CA from another, and the only cheap check that the vault this host
+// was pointed at is the one the nodes trust.
+using (var caCertificate = app.Services.GetRequiredService<ICertificateAuthorityProvider>()
+    .GetAuthority().PublicCertificate)
+{
+    if (pkiOptions.IsConfigured)
+    {
+        var subject = caCertificate.Subject;
+        var expiry = caCertificate.NotAfter.ToUniversalTime();
+        StartupLog.UsingKeyVaultCertificateAuthority(
+            app.Logger, pkiOptions.KeyVaultUri!, subject, expiry);
+    }
+    else
+    {
+        StartupLog.UsingDevelopmentCertificateAuthority(app.Logger);
+    }
+}
 
 
 // Routing first so the endpoint's listener metadata is known; the separation check before

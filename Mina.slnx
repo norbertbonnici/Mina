@@ -5,8 +5,12 @@
     <Project Path="control-plane/src/Mina.ControlPlane.Application/Mina.ControlPlane.Application.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Domain/Mina.ControlPlane.Domain.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Hosting/Mina.ControlPlane.Hosting.csproj" />
+    <Project Path="control-plane/src/Mina.ControlPlane.KeyVault/Mina.ControlPlane.KeyVault.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Persistence/Mina.ControlPlane.Persistence.csproj" />
     <Project Path="control-plane/src/Mina.ControlPlane.Pki/Mina.ControlPlane.Pki.csproj" />
+  </Folder>
+  <Folder Name="/control-plane/tools/">
+    <Project Path="control-plane/tools/Mina.Ca/Mina.Ca.csproj" />
   </Folder>
   <Folder Name="/demo/">
     <Project Path="demo/Mina.Demo/Mina.Demo.csproj" />

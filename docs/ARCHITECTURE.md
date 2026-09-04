@@ -159,7 +159,11 @@ corporate networks — they call a public endpoint, exactly as they called an Az
   configure rather than platform-managed.
 - **Azure Key Vault** (remains in Azure, D-18): internal CA key and Envoy server certificate
   material. Reached outbound from the control-plane hosts using their Arc-enabled server managed
-  identity, so no credential is stored on premises either.
+  identity, so no credential is stored on premises either. Certificate issuance sends the vault a
+  digest and receives a signature — the key is created in the vault, is not exportable, and no part
+  of the platform is granted a role that could export it (M2-2c). The CA certificate is created once
+  by an operator tool and stored beside the key; the API can read it but not write it, so it has no
+  way to re-root the platform (D-20).
 - **Azure immutable blob storage** (remains in Azure, D-18): audit export anchors. On-premises
   storage the same administrator controls cannot make an anchor tamper-evident.
 
@@ -364,7 +368,7 @@ token taken from the environment so it never enters a variable, a tfvars file or
 | Resource | Notes |
 |---|---|
 | Resource group `rg-mina-<env>-cp` | |
-| Key Vault (RBAC, purge protection) | Internal CA key (non-exportable). Premium/HSM in production; reached outbound from the Arc-enabled hosts |
+| Key Vault (RBAC, purge protection) | Internal CA key (non-exportable) and, beside it as a secret, the CA certificate itself — Key Vault's certificate objects are always end-entity, so a CA certificate cannot be one (D-20). Premium/HSM in production; reached outbound from the Arc-enabled hosts. The control plane holds Crypto User + Secrets User: it signs and reads, and cannot write the certificate or export the key |
 | Storage account (immutable/WORM container) | Periodic signed audit export for tamper evidence. Locked immutability in production — Unlocked anchors nothing |
 | Log Analytics workspace | CA key use (Key Vault AuditEvent) and audit-anchor access (StorageRead/Write/Delete); optional subscription Activity Log export for the ARM operations that would remove tamper evidence. **It currently sits in the subscription it watches**, so it shares a blast radius with the resources it protects — moving it to a separate subscription is a production gate (M4-28) |
 

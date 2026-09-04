@@ -56,6 +56,28 @@ retention period; that is a production-gate item, not a default this environment
 The Key Vault SKU is `standard` here (software-protected). The CA signing key warrants `premium` and
 its HSM in production.
 
+### Bootstrap the internal CA (once per vault)
+
+Terraform creates the signing key but cannot give it a certificate — Key Vault's own certificate
+objects are always end-entity, so a CA certificate has to be assembled and signed through the
+vault's `sign` operation (D-20). That is one command, run once, by an operator whose account has
+the Key Vault Crypto User and Secrets Officer roles this module assigns to the Terraform principal:
+
+```bash
+dotnet run --project ../../../../control-plane/tools/Mina.Ca -- bootstrap --vault "$(terraform output -raw key_vault_uri)"
+```
+
+Add `--dry-run` to sign a certificate and print it without storing anything — useful to confirm the
+vault, the key and the permissions before writing the trust root. `mina-ca show --vault ...` loads
+the CA exactly as the control plane does, including the certificate/key match check, so a green
+`show` means the API would start on this vault.
+
+The API then needs `Mina:Pki:KeyVaultUri` set and its own identity granted Crypto User and Secrets
+User — pass that identity as `control_plane_principal_id`. Here that is the Windows application
+host's Arc system-assigned managed identity (`mina-dev-cp-app`, M4-18), the same identity that
+already authenticates to SQL Server with no stored credential. A host without that setting still
+runs the ephemeral development CA and warns about it at startup.
+
 ## Check these two outputs after applying
 
 `audit_anchors_are_immutable` and `alerting_enabled` both report **false** unless you configure
@@ -74,10 +96,11 @@ looking, including when it is you.
    (M4-15 first cut: hosts, firewalls and the publishing proxy — no SQL Server, Arc onboarding or
    application deployment yet). Until it is up the nodes have nothing to fetch an allowlist from and
    no analyst can be issued a session.
-2. **A production-capable CA or audit sink.** `M2-2c` (Key Vault-backed CA) and `M4-19` (immutable
-   blob audit sink) are unbuilt, so the control plane still refuses to start outside Development
-   unless `Mina:AllowDevelopmentFallbacks=true` — which means an ephemeral CA and a filesystem sink.
-   The Key Vault and container created here are what those two items will consume.
+2. **A production-capable audit sink, or a control plane that can reach the CA.** `M4-19` (immutable
+   blob audit sink) is unbuilt, so the control plane still refuses to start outside Development
+   unless `Mina:AllowDevelopmentFallbacks=true`. The Key Vault CA itself is built (M2-2c) and can be
+   bootstrapped here today, but the API can only use it once its host has an identity to grant Key
+   Vault roles to — Arc onboarding, M4-18 — so until then it runs the ephemeral CA regardless.
 
 Plan/apply against the real subscription follows the CLAUDE.md rules: no destructive operations
 without explicit human approval.

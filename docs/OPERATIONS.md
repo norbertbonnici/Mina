@@ -24,7 +24,11 @@
 - Egress region activation (standing up a second approved region on demand, D-11).
 - Emergency disable of an egress region.
 - Break-glass activation and post-use review.
-- Certificate/key/secret rotation.
+- Certificate/key/secret rotation. Includes **internal CA rollover** (M4-2), which is
+  `mina-ca bootstrap --replace` plus redistribution of the trust root: every certificate issued
+  under the old root stops validating the moment nodes reload, so the runbook is about the order of
+  those two steps, not the command. First-time bootstrap of a vault is the same tool without
+  `--replace` and is a deployment step, not a runbook (D-20; `infra/terraform/environments/dev/README.md`).
 - Database schema migration (apply the idempotent EF script as a deliberate, approved deployment
   step; the application never migrates on startup — see `control-plane/src/Mina.ControlPlane.Persistence/README.md`).
 - Rollback to previous release.

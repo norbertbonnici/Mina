@@ -33,10 +33,10 @@ public static class HostingGuard
 
     /// <summary>
     /// Opt-in switch for running both surfaces on one listener. Separate from
-    /// <see cref="AllowDevelopmentFallbacksKey"/> on purpose: while the Key Vault CA (M2-2c) and the
-    /// immutable-blob audit sink (M4-19) are unbuilt, every non-Development host has to set that flag
-    /// simply to boot — so hanging listener separation off it meant the one configuration the
-    /// separation exists to protect was also the one that switched it off.
+    /// <see cref="AllowDevelopmentFallbacksKey"/> on purpose: while the immutable-blob audit sink
+    /// (M4-19) is unbuilt, every non-Development host has to set that flag simply to boot — so
+    /// hanging listener separation off it meant the one configuration the separation exists to
+    /// protect was also the one that switched it off.
     /// </summary>
     public const string AllowSingleListenerKey = "Mina:Hosting:AllowSingleListener";
 

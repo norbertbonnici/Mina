@@ -12,9 +12,11 @@
     the new one, so a file dropped from the build never lingers), and fails closed on bad input
     rather than splicing it unvalidated into a remotely-executed script.
 
-    No production CA exists in code yet (backlog M2-2c) -- Mina:AllowDevelopmentFallbacks=true is
-    still the only way this process starts at all, and every session certificate still regenerates
-    on every restart. Unlike the first Linux deployment, SQL persistence is expected to be
+    Mina:AllowDevelopmentFallbacks=true is still the only way this process starts at all, but now
+    only because of the audit export sink (backlog M4-19): the Key Vault-backed CA exists since
+    M2-2c, and -CaKeyVaultUri points this host at it so session certificates are signed by a key it
+    cannot read. Without that parameter the ephemeral CA is still used and still regenerates on
+    every restart. Unlike the first Linux deployment, SQL persistence is expected to be
     configured (-SqlAddress), because M4-18 (SQL Server + Arc) has landed -- this script requires
     it rather than falling back to in-memory state silently.
 
@@ -124,6 +126,16 @@ param(
 
     [ValidatePattern('^c[0-9]{1,3}$')]
     [string]$RequiredAuthContextId,
+
+    # The internal CA's vault (M2-2c) -- `terraform output -raw key_vault_uri`. Set it and this
+    # host signs session certificates with a key it cannot read, using its own Arc managed
+    # identity; leave it unset and it uses the ephemeral development CA, which regenerates on
+    # every restart. Setting it before the CA has been bootstrapped (`mina-ca bootstrap`), or
+    # before this host's identity holds Key Vault Crypto User and Secrets User, makes the API
+    # refuse to start -- deliberately, because the alternative is a host that starts and cannot
+    # issue a certificate.
+    [ValidatePattern('^https://[a-z0-9-]{3,24}\.vault\.azure\.net/?$')]
+    [string]$CaKeyVaultUri,
 
     [ValidateRange(1, 65535)]
     [int]$NodePort = 8443,
@@ -513,6 +525,9 @@ Grant-MinaAcl '$deployPathLiteral' '(OI)(CI)(RX)'
         $envVars["AzureAd__Audience"] = $AzureAdClientId
     }
     if ($RequiredAuthContextId) { $envVars["Mina__Session__RequiredAuthContextId"] = $RequiredAuthContextId }
+    # No credential accompanies this: DefaultAzureCredential on the guest finds the Arc agent's
+    # managed identity, the same way the SQL connection string's Active Directory Default does.
+    if ($CaKeyVaultUri) { $envVars["Mina__Pki__KeyVaultUri"] = $CaKeyVaultUri }
     # Sent via stdin (Invoke-GuestPSStdin), not interpolated into the script text, specifically so
     # a connection string or key path containing a quote or backtick can't break out of the
     # generated PowerShell -- JSON-encode here, JSON-decode on the guest.

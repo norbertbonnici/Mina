@@ -13,4 +13,10 @@ public static partial class StartupLog
         Message = "Using the ephemeral development certificate authority. Certificates it issues stop " +
                   "validating when this process restarts; production must use the Key Vault-backed CA.")]
     public static partial void UsingDevelopmentCertificateAuthority(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "Internal CA loaded from Key Vault {VaultUri}: {Subject}, valid until {NotAfter:u}. " +
+                  "The signing key stays in the vault; every issuance is a sign operation there.")]
+    public static partial void UsingKeyVaultCertificateAuthority(
+        ILogger logger, string vaultUri, string subject, DateTimeOffset notAfter);
 }
