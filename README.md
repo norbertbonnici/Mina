@@ -19,6 +19,48 @@ moved the control plane on premises and superseded ADR-0005, so the Check Point 
 longer a dependency or an open precondition. Work proceeds per `docs/BACKLOG.md`; milestone M0 is
 complete and the on-premises move is tracked as M4-14 to M4-28.
 
+## How it fits together
+
+```mermaid
+flowchart TB
+    subgraph EP["Managed Windows 11 endpoint (Intune)"]
+        RB["Research Edge profile"]
+        AG["Mina agent\nloopback proxy, fail-closed"]
+        OTHER["Everything else"]
+        RB -- "127.0.0.1 proxy" --> AG
+    end
+
+    subgraph CP["Control plane (on premises, DMZ)"]
+        API["Control-plane API"]
+        UI["Management UI\napprovals, regions, audit"]
+        DB[("SQL Server\nsessions, approvals, audit")]
+        UI --- API --- DB
+    end
+
+    subgraph AZ["Azure egress stamp (per approved EU region)"]
+        ENV["Envoy\nmTLS + HTTP/2 CONNECT"]
+        NAT["NAT Gateway\nstatic egress IPs"]
+        ENV --> NAT
+    end
+
+    ENTRA["Microsoft Entra ID\nConditional Access + device compliance"]
+
+    OTHER -- "normal corporate egress, unchanged" --> INET1[("Internet")]
+    AG -- "1. sign in, request session" --> API
+    ENTRA -.-> AG
+    ENTRA -.-> API
+    AG -- "2. mTLS tunnel" --> ENV
+    NAT -- "approved egress IP" --> INET2[("Research targets")]
+    ENV -- "allowlist + hostname telemetry" --> API
+    API -- "security / audit events" --> WZ["Wazuh"]
+    API -- "operational telemetry" --> SN["SigNoz"]
+    API -- "CA key, audit anchors" --> KV["Azure Key Vault +\nimmutable storage"]
+```
+
+Only the research profile reaches the agent; if the agent, the session or the tunnel is lost, that
+profile has no route out at all. The egress nodes have no path back into the organisation. The full
+diagram with every listener and trust boundary is in `docs/ARCHITECTURE.md`.
+
 ## See it working
 
 ```bash
