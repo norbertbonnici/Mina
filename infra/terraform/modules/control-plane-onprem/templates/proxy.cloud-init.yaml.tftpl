@@ -1,0 +1,277 @@
+#cloud-config
+# Mina control plane — publishing reverse proxy (ADR-0006 constraint 1).
+#
+# This host exists to publish ONE thing: the node-facing listener, so the Azure egress nodes can
+# reach the control plane without any route into corporate networks. There is deliberately no
+# server block for the management listener. That is the point of putting the proxy on its own host —
+# a configuration mistake here cannot expose the approvals UI or the audit read API, because the
+# configuration that would expose them does not exist on this machine.
+#
+# Public TLS terminates in front of this host (a Cloudflare Tunnel connector at
+# tunnel_connector_cidr, or your own reverse proxy) rather than here — ADR-0006 constraint 3 still
+# holds (a public-CA certificate is what the internet sees), it just isn't installed on this VM.
+# nginx only needs to be reachable, over plain HTTP, from that one connector.
+
+package_update: true
+packages:
+  - nginx
+  - nftables
+  - qemu-guest-agent
+%{ if otlp_endpoint != null ~}
+  - curl
+%{ endif ~}
+
+users:
+  - default
+  - name: mina-admin
+    groups: [sudo]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+%{ for key in ssh_keys ~}
+      - ${key}
+%{ endfor ~}
+
+write_files:
+  # http-context configuration for the node listener (M4-14): where the real client address comes
+  # from, the rate-limit zones, the source-prefix map and the log format. Debian's nginx.conf
+  # includes conf.d/*.conf inside http {}, which is the only context these directives are legal in.
+  - path: /etc/nginx/conf.d/mina-node-http.conf
+    permissions: "0644"
+    content: |
+      # Recover the original client address from the TLS-terminating front end. Trusted from the
+      # tunnel connector only: a header a client could set itself would let it pick its own
+      # rate-limit bucket and its own "known source" verdict. Without this, every node in every
+      # region arrives as one address -- the connector's -- and per-source limiting is meaningless.
+      set_real_ip_from ${tunnel_connector_cidr};
+      real_ip_header ${real_ip_header};
+
+      # Rate limits (answered 429, logged at warn). One address is a whole stamp's worth of nodes
+      # (they share the stamp's NAT prefix), so the per-source figure is sized per stamp, not per
+      # node -- see the module's node_rate_limit variable for the arithmetic. The total zone
+      # bounds the listener regardless of how many sources are hitting it.
+      limit_req_zone $binary_remote_addr zone=mina_node_per_source:10m rate=${rate.requests_per_second_per_source}r/s;
+      limit_req_zone $server_name        zone=mina_node_total:1m       rate=${rate.requests_per_second_total}r/s;
+      limit_conn_zone $binary_remote_addr zone=mina_node_conn:10m;
+      limit_req_status 429;
+      limit_conn_status 429;
+      limit_req_log_level warn;
+      limit_conn_log_level warn;
+
+      # Is this request from one of the egress stamps' NAT prefixes? Tagged on every access-log line
+      # as mina_source_known (1/0, or "unconfigured" when no prefixes are listed so the alert on
+      # unknown sources cannot fire against an empty list). Enforcement is separate and off by
+      # default (enforce_node_source_cidrs): the application refuses anything without a node token
+      # regardless, so this is defence in depth, and a missing prefix would silence a whole region.
+      geo $remote_addr $mina_source_known {
+%{ if length(node_source_cidrs) == 0 ~}
+          default unconfigured;
+%{ else ~}
+          default 0;
+%{ for cidr in node_source_cidrs ~}
+          ${cidr} 1;
+%{ endfor ~}
+%{ endif ~}
+      }
+
+      # One JSON line per request, Wazuh- and OpenTelemetry-ready as-is (json log_format needs no
+      # custom decoder in either). What is here is operational: who (the recovered node address),
+      # what route, outcome, timing, and whether the limiter or the source check acted. What is
+      # deliberately not here: request bodies (telemetry batches carry research hostnames, which
+      # must never reach this host's logs, Wazuh or SigNoz -- AC-014) and query strings (the node
+      # API has none). The node API's paths name regions and sessions, never destinations.
+      log_format mina_node escape=json
+          '{"schema":"mina.proxy.v1",'
+          '"time":"$time_iso8601",'
+          '"remote_addr":"$remote_addr",'
+          '"mina_source_known":"$mina_source_known",'
+          '"method":"$request_method",'
+          '"path":"$uri",'
+          '"status":$status,'
+          '"upstream_status":"$upstream_status",'
+          '"limit_req":"$limit_req_status",'
+          '"request_time":$request_time,'
+          '"upstream_time":"$upstream_response_time",'
+          '"bytes_in":$request_length,'
+          '"bytes_out":$body_bytes_sent}';
+
+      # nginx's own counters for the collector (active/reading/writing connections, requests).
+      # Loopback only; nftables accepts lo, nothing else can reach this port.
+      server {
+          listen 127.0.0.1:8080;
+          location = /nginx_status {
+              stub_status;
+              access_log off;
+          }
+          location / { return 404; }
+      }
+
+  - path: /etc/nginx/sites-available/mina-node
+    permissions: "0644"
+    content: |
+      # Plain HTTP: the tunnel connector at tunnel_connector_cidr is the only thing that can reach
+      # this (see nftables below), and it already arrived over an encrypted, authenticated tunnel
+      # from Cloudflare's edge, which is where the public-facing TLS certificate actually lives.
+      server {
+          listen 80;
+          listen [::]:80;
+          server_name ${public_hostname};
+
+          access_log /var/log/nginx/mina-node.access.json mina_node;
+
+          # A telemetry batch is the largest thing a node sends: ten seconds of connection records
+          # at a few hundred bytes each. 4m is an order of magnitude over a busy node's worst case
+          # and two orders under what would let a client tie up the worker.
+          client_max_body_size 4m;
+
+          # Only the node API is proxied. Any other path is refused here as well as by the
+          # application's own listener separation; the two are redundant on purpose.
+          location /api/nodes/ {
+%{ if enforce_node_source_cidrs ~}
+              # Source policy, enforced (enforce_node_source_cidrs = true): only the stamps' NAT
+              # prefixes may reach the node API. Refused here before any application code runs.
+              if ($mina_source_known = 0) {
+                  return 403;
+              }
+%{ endif ~}
+              limit_req  zone=mina_node_per_source burst=${rate.burst_per_source} nodelay;
+              limit_req  zone=mina_node_total      burst=${rate.burst_total} nodelay;
+              limit_conn mina_node_conn ${rate.connections_per_source};
+
+              proxy_pass http://${app_ip}:${node_port};
+              proxy_set_header Host              $host;
+              proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+              # Hardcoded, not $scheme: nginx's own view is plain HTTP, but the request the public
+              # internet actually made was HTTPS (terminated at the tunnel's far end). The app
+              # trusts this for exactly one hop (Mina:Hosting:ForwardedProxyCount) -- if that chain
+              # ever grows past this proxy (e.g. something in front of the tunnel connector too),
+              # that setting needs revisiting alongside it.
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_read_timeout 60s;
+          }
+
+          location = /healthz {
+              # Shares the per-source zone so a probe storm counts against its source like any
+              # other request; a health check that could bypass the limiter would be the bypass.
+              limit_req zone=mina_node_per_source burst=${rate.burst_per_source} nodelay;
+              proxy_pass http://${app_ip}:${node_port};
+              proxy_set_header Host $host;
+          }
+
+          location / {
+              return 404;
+          }
+      }
+
+%{ if otlp_endpoint != null ~}
+  # The proxy host's own observability (M4-14 monitoring): nginx's stub_status counters and the
+  # node-listener access/error logs, to SigNoz over OTLP. The access log carries no research
+  # content by construction (see the log_format above), so there is nothing to scrub here; the
+  # pipeline is kept to resource attribution and batching. Validated with
+  # `otelcol-contrib validate` before commit (see BACKLOG M4-14 for the exact build used).
+  - path: /etc/mina/otelcol.yaml
+    permissions: "0640"
+    content: |
+      receivers:
+        nginx:
+          endpoint: http://127.0.0.1:8080/nginx_status
+          collection_interval: 15s
+        filelog/access:
+          include: [/var/log/nginx/mina-node.access.json]
+          start_at: end
+          operators:
+            - type: json_parser
+              parse_to: attributes
+            - type: severity_parser
+              parse_from: attributes.status
+              mapping:
+                warn: [429, 4xx]
+                error: [5xx]
+                info: [2xx, 3xx]
+        filelog/error:
+          include: [/var/log/nginx/error.log]
+          start_at: end
+      processors:
+        resource:
+          attributes:
+            - { key: service.name, value: mina-cp-proxy, action: upsert }
+            - { key: service.namespace, value: mina, action: upsert }
+            - { key: deployment.environment.name, value: "${prefix}", action: upsert }
+        batch: {}
+      exporters:
+        otlp:
+          endpoint: ${otlp_endpoint}
+          tls:
+            insecure: ${otlp_insecure}
+      service:
+        pipelines:
+          metrics:
+            receivers: [nginx]
+            processors: [resource, batch]
+            exporters: [otlp]
+          logs:
+            receivers: [filelog/access, filelog/error]
+            processors: [resource, batch]
+            exporters: [otlp]
+
+  # The .deb's unit reads OTELCOL_OPTIONS from /etc/otelcol-contrib/otelcol-contrib.conf and
+  # points at the package's own config. Override to ours, and join the adm group so the service
+  # account the package creates can read /var/log/nginx (root:adm, 0640) -- read only, nothing
+  # here can write to the logs it watches.
+  - path: /etc/systemd/system/otelcol-contrib.service.d/mina.conf
+    permissions: "0644"
+    content: |
+      [Service]
+      Environment=OTELCOL_OPTIONS=--config=/etc/mina/otelcol.yaml
+      SupplementaryGroups=adm
+
+%{ endif ~}
+  - path: /etc/nftables.conf
+    permissions: "0644"
+    content: |
+      #!/usr/sbin/nft -f
+      flush ruleset
+      table inet filter {
+        chain input {
+          type filter hook input priority 0; policy drop;
+          ct state established,related accept
+          iif lo accept
+          # Only the tunnel connector may reach the node-facing listener -- nothing on the
+          # internet talks to this host directly, since public TLS terminates in front of it.
+          ip saddr ${tunnel_connector_cidr} tcp dport 80 accept
+          # Administration from corporate ranges only.
+%{ for cidr in corp_cidrs ~}
+          ip saddr ${cidr} tcp dport 22 accept
+%{ endfor ~}
+        }
+        chain forward { type filter hook forward priority 0; policy drop; }
+      }
+
+runcmd:
+  - [ rm, -f, /etc/nginx/sites-enabled/default ]
+  - [ ln, -sf, /etc/nginx/sites-available/mina-node, /etc/nginx/sites-enabled/mina-node ]
+  - [ systemctl, enable, --now, nftables ]
+  - [ systemctl, enable, --now, qemu-guest-agent ]
+  # The Debian/Ubuntu nginx package starts the service immediately on install, with the stock
+  # default site -- before this cloud-init boot even reaches this line. "enable --now" on an
+  # already-running service is a no-op that doesn't reload config, which silently leaves the
+  # default site (not ours) serving every request. Restart, not enable --now, to force it to
+  # actually pick up /etc/nginx/sites-enabled/mina-node regardless of that race.
+  - [ systemctl, enable, nginx ]
+  - [ systemctl, restart, nginx ]
+%{ if otlp_endpoint != null ~}
+  # OpenTelemetry Collector, pinned release, checksum-verified before dpkg sees it -- the same
+  # discipline the egress node applies to its Envoy download. A digest mismatch leaves the host
+  # without a collector (and says so in cloud-init's log) rather than installing something else.
+  - - sh
+    - -ec
+    - |
+      cd /tmp
+      curl -fsSLo otelcol-contrib.deb "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${otelcol_version}/otelcol-contrib_${otelcol_version}_linux_amd64.deb"
+      echo "${otelcol_sha256}  otelcol-contrib.deb" | sha256sum -c -
+      DEBIAN_FRONTEND=noninteractive dpkg -i otelcol-contrib.deb
+      rm -f otelcol-contrib.deb
+      systemctl daemon-reload
+      systemctl enable otelcol-contrib
+      systemctl restart otelcol-contrib
+%{ endif ~}

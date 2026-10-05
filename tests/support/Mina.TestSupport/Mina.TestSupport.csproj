@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\endpoint-agent\src\Mina.EndpointAgent\Mina.EndpointAgent.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Api\Mina.ControlPlane.Api.csproj" />
+    <ProjectReference Include="..\..\..\control-plane\src\Mina.ControlPlane.Pki\Mina.ControlPlane.Pki.csproj" />
+    <ProjectReference Include="..\..\..\egress-node\src\Mina.EgressNode.Sidecar\Mina.EgressNode.Sidecar.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

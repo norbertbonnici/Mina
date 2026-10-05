@@ -1,0 +1,7 @@
+{
+  "sdk": {
+    "_comment": "Pinned exactly: the Web SDK injects Microsoft.AspNetCore.App.Internal.Assets at the ASP.NET Core patch it bundles, and that version is recorded in packages.lock.json. A roll-forward to a newer SDK patch therefore breaks `dotnet restore --locked-mode` with NU1004 (SR-012 / threat N7). Bump this deliberately and regenerate the lock files in the same commit.",
+    "version": "10.0.401",
+    "rollForward": "disable"
+  }
+}

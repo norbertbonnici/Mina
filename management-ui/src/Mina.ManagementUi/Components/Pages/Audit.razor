@@ -1,0 +1,146 @@
+@page "/audit"
+@using Microsoft.AspNetCore.Authorization
+@using Mina.ControlPlane.Application.Audit
+@using Mina.ControlPlane.Application.Sessions
+@using Mina.ControlPlane.Domain.Audit
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject AuditReviewService Reviews
+@inject AuthenticationStateProvider AuthState
+
+<h1>Audit</h1>
+<p class="lede">
+    The governance trail (<code>audit</code> schema) — session lifecycle, approvals, telemetry
+    access and platform events, most recent first. Nothing here is ever amended or deleted; a
+    rewrite attempt would break the hash chain <code>GET /api/audit/verify</code> checks. Every view
+    of this page is itself written to the trail as <code>audit_trail_viewed</code> — reading it is a
+    privileged operation, and who looked is as much a governance fact as what happened.
+</p>
+
+<form method="get" class="filters">
+    <div class="field">
+        <label for="f-severity">Severity</label>
+        <select id="f-severity" name="severity">
+            <option value="">Any</option>
+            @foreach (var s in Enum.GetValues<AuditSeverity>())
+            {
+                <option value="@s" selected="@(s.ToString() == Severity)">@s</option>
+            }
+        </select>
+    </div>
+    <div class="field">
+        <label for="f-component">Component</label>
+        <select id="f-component" name="component">
+            <option value="">Any</option>
+            @foreach (var c in Enum.GetValues<AuditComponent>())
+            {
+                <option value="@c" selected="@(c.ToString() == Component)">@c</option>
+            }
+        </select>
+    </div>
+    <div class="field">
+        <label for="f-type">Event type contains</label>
+        <input type="text" id="f-type" name="type" value="@EventTypeContains" placeholder="e.g. session, approved, viewed" />
+    </div>
+    <button type="submit">Apply</button>
+</form>
+<p class="muted" style="margin-top:-1rem">
+    Showing the most recent @Limit events before filtering (@AuditReviewService.MaxLimit max) —
+    filters narrow this window, they do not search further back. A gap between an event's sequence
+    and the one before it in this list means events were filtered out, not lost.
+</p>
+
+@if (_result is null)
+{
+    <div class="empty">Loading…</div>
+}
+else
+{
+    <div class="cards">
+        <div class="card">
+            <span class="value">@_result.Events.Count</span>
+            <span class="label">Shown</span>
+        </div>
+        <div class="card">
+            <span class="value">@_result.TotalBeforeFilter</span>
+            <span class="label">Fetched before filtering</span>
+        </div>
+        <div class="card">
+            <span class="value" style="color:var(--warn)">@_result.Events.Count(e => e.Severity is AuditSeverity.High or AuditSeverity.Critical)</span>
+            <span class="label">High / Critical shown</span>
+        </div>
+    </div>
+
+    if (_result.Events.Count == 0)
+    {
+        <div class="empty">No events match this filter in the fetched window.</div>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Seq</th>
+                    <th>Time (UTC)</th>
+                    <th>Type</th>
+                    <th>Severity</th>
+                    <th>Component</th>
+                    <th>Region</th>
+                    <th>User</th>
+                    <th>Session</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var e in _result.Events)
+                {
+                    <tr class="@(e.Severity is AuditSeverity.High or AuditSeverity.Critical ? "flagged" : null)">
+                        <td class="mono">@e.Sequence</td>
+                        <td class="mono">@e.OccurredAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td><code>@e.EventType</code></td>
+                        <td><span class="pill @e.Severity.ToString().ToLowerInvariant()">@e.Severity</span></td>
+                        <td>@e.Component</td>
+                        <td>@(e.Region ?? "—")</td>
+                        <td>@(e.UserPrincipalName ?? "—")</td>
+                        <td class="mono">@(e.SessionId?.ToString()[..8] ?? "—")</td>
+                    </tr>
+                    <tr class="@(e.Severity is AuditSeverity.High or AuditSeverity.Critical ? "flagged" : null)">
+                        <td></td>
+                        <td colspan="7"><code class="data">@e.Data</code></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "severity")]
+    private string? Severity { get; set; }
+
+    [SupplyParameterFromQuery(Name = "component")]
+    private string? Component { get; set; }
+
+    [SupplyParameterFromQuery(Name = "type")]
+    private string? EventTypeContains { get; set; }
+
+    [SupplyParameterFromQuery(Name = "limit")]
+    private int? LimitRaw { get; set; }
+
+    private int Limit => Math.Clamp(LimitRaw ?? 200, 1, AuditReviewService.MaxLimit);
+
+    private AuditReviewResult? _result;
+
+    // Re-runs on every navigation under static SSR, the same lifecycle BrowsingData.razor's own
+    // query-bound filters rely on -- each filter change is a fresh GET and a fresh query, not a
+    // client-side re-render of previously fetched data.
+    protected override async Task OnParametersSetAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        var severity = Enum.TryParse<AuditSeverity>(Severity, out var s) ? s : (AuditSeverity?)null;
+        var component = Enum.TryParse<AuditComponent>(Component, out var c) ? c : (AuditComponent?)null;
+
+        _result = await Reviews.ReviewAsync(
+            user.ToSessionPrincipal(),
+            new AuditReviewQuery(Limit, severity, component, EventTypeContains),
+            CancellationToken.None);
+    }
+}

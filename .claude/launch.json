@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "management-ui",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "management-ui/src/Mina.ManagementUi", "--launch-profile", "http"],
+      "port": 5048
+    }
+  ]
+}

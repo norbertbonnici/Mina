@@ -1,0 +1,174 @@
+@page "/region-requests"
+@using Microsoft.AspNetCore.Authorization
+@using Mina.ControlPlane.Application.Regions
+@using Mina.ControlPlane.Application.Sessions
+@using Mina.ControlPlane.Domain.Regions
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject RegionChangeRequestService Requests
+@inject AuthenticationStateProvider AuthState
+
+<h1>Region Requests</h1>
+<p class="lede">
+    Requests to change the approved/active egress region list (ADR-0008). This screen captures
+    intent and its justification only — it never changes <code>Mina:Regions:Approved</code>/
+    <code>Active</code> itself. That stays a reviewed
+    <code>deploy-control-plane-api-windows.ps1</code> / <code>deploy-management-ui-windows.ps1</code>
+    run; "Mark applied" below records that the deploy actually happened, it does not cause it.
+</p>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="banner">@Error</div>
+}
+else if (!string.IsNullOrEmpty(Done))
+{
+    <div class="notice">@Done</div>
+}
+
+<h2 style="font-size:1rem">New request</h2>
+<form method="post" action="/region-requests/create" class="filters">
+    <AntiforgeryToken />
+    <div class="field">
+        <label for="f-kind">Change</label>
+        <select id="f-kind" name="kind" required>
+            <option value="@RegionChangeKind.AddApproved">Add to approved list</option>
+            <option value="@RegionChangeKind.RemoveApproved">Remove from approved list</option>
+            <option value="@RegionChangeKind.Activate">Activate (stamp is deployed and healthy)</option>
+            <option value="@RegionChangeKind.Deactivate">Deactivate</option>
+        </select>
+    </div>
+    <div class="field">
+        <label for="f-region">Region</label>
+        <input type="text" id="f-region" name="regionName" placeholder="e.g. northeurope" required
+               pattern="[a-z0-9]+" maxlength="@RegionChangeRequest.MaxRegionNameLength"
+               title="Lowercase letters and digits only, matching Azure region naming." />
+    </div>
+    <div class="field" style="flex:1 1 320px">
+        <label for="f-justification">Justification</label>
+        <textarea id="f-justification" name="justification" rows="2" required
+                  maxlength="@RegionChangeRequest.MaxJustificationLength"
+                  placeholder="Why this change, e.g. a capacity or coverage need"></textarea>
+    </div>
+    <button type="submit">Submit request</button>
+</form>
+
+<h2 style="font-size:1rem;margin-top:2rem">Pending</h2>
+@if (_pending is null)
+{
+    <div class="empty">Loading…</div>
+}
+else if (_pending.Count == 0)
+{
+    <div class="empty">No requests are waiting.</div>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Requested</th>
+                <th>By</th>
+                <th>Change</th>
+                <th>Region</th>
+                <th>Justification</th>
+                <th>Resolve</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var request in _pending)
+            {
+                <tr>
+                    <td class="mono">@request.RequestedAt.ToLocalTime().ToString("dd MMM HH:mm")</td>
+                    <td>@request.RequestedByUpn</td>
+                    <td>@KindLabel(request.Kind)</td>
+                    <td><code>@request.RegionName</code></td>
+                    <td>@request.Justification</td>
+                    <td>
+                        <form class="inline" method="post" action="/region-requests/apply">
+                            <AntiforgeryToken />
+                            <input type="hidden" name="requestId" value="@request.Id" />
+                            <input type="text" name="note" placeholder="how (optional)" aria-label="Applied note" />
+                            <button class="approve" type="submit">Mark applied</button>
+                        </form>
+                        <form class="inline" method="post" action="/region-requests/dismiss">
+                            <AntiforgeryToken />
+                            <input type="hidden" name="requestId" value="@request.Id" />
+                            <input type="text" name="reason" placeholder="reason" required aria-label="Dismissal reason" />
+                            <button class="deny" type="submit">Dismiss</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<h2 style="font-size:1rem;margin-top:2rem">Recently resolved</h2>
+@if (_resolved is null)
+{
+    <div class="empty">Loading…</div>
+}
+else if (_resolved.Count == 0)
+{
+    <div class="empty">Nothing resolved yet.</div>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Resolved</th>
+                <th>By</th>
+                <th>Change</th>
+                <th>Region</th>
+                <th>Status</th>
+                <th>Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var request in _resolved)
+            {
+                <tr>
+                    <td class="mono">@request.ResolvedAt?.ToLocalTime().ToString("dd MMM HH:mm")</td>
+                    <td>@request.ResolvedByUpn</td>
+                    <td>@KindLabel(request.Kind)</td>
+                    <td><code>@request.RegionName</code></td>
+                    <td>
+                        <span class="pill @(request.Status == RegionChangeRequestStatus.Applied ? "active" : "ended")">
+                            @request.Status
+                        </span>
+                    </td>
+                    <td>@request.ResolutionNote</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "done")]
+    private string? Done { get; set; }
+
+    private IReadOnlyList<RegionChangeRequestView>? _pending;
+    private IReadOnlyList<RegionChangeRequestView>? _resolved;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        var principal = user.ToSessionPrincipal();
+        _pending = await Requests.ListPendingAsync(principal, CancellationToken.None);
+        _resolved = await Requests.ListRecentlyResolvedAsync(principal, CancellationToken.None);
+    }
+
+    private static string KindLabel(RegionChangeKind kind) => kind switch
+    {
+        RegionChangeKind.AddApproved => "Add to approved",
+        RegionChangeKind.RemoveApproved => "Remove from approved",
+        RegionChangeKind.Activate => "Activate",
+        RegionChangeKind.Deactivate => "Deactivate",
+        _ => kind.ToString(),
+    };
+}

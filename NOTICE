@@ -1,0 +1,17 @@
+Mina — organisation-controlled secure internet research egress platform
+Copyright 2026 Norbert Bonnici
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+Mina runs alongside, but does not redistribute, the following independently
+licensed software, which you must obtain separately:
+  - Envoy proxy (Apache License 2.0) — the egress-node data plane.
+  - Microsoft Edge, Windows, Intune, Entra ID and Azure services — subject to
+    Microsoft's own terms.
+  - Wazuh and SigNoz — receive events over the network under their own licences;
+    no Wazuh or SigNoz code is included in this repository.
+
+NuGet packages consumed at build time are listed in each project's
+packages.lock.json and are licensed under MIT or Apache 2.0 by their respective
+owners (Microsoft, the .NET Foundation, the OpenTelemetry Authors, the xUnit
+project and others).

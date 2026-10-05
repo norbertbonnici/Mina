@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Generated icon assets (branding/New-MinaIcons.ps1); never normalise line endings in them
+*.ico binary
+*.png binary

@@ -1,0 +1,411 @@
+# Mina egress node — Envoy as an authenticated forward CONNECT proxy (ADR-0001 C-tx).
+#
+# Security properties this config enforces:
+#   - Ingress requires a client certificate chaining to Mina's internal CA (mTLS). There is no
+#     unauthenticated listener — an open-proxy scan gets a TLS handshake demand and nothing else
+#     (AC-016, THREAT open-proxy).
+#   - A certificate alone does not open a tunnel. Every request is checked with the node sidecar
+#     (ext_authz over a Unix socket), which admits only sessions the control plane currently lists
+#     for this region — so a revoked session is refused within one allowlist refresh rather than
+#     serving until its certificate expires (M4-11). The check fails closed: if the sidecar does not
+#     answer, nothing is admitted.
+#   - ext_authz is not re-run on a connection already open, so admission alone leaves a revoked
+#     session's existing tunnel carrying traffic indefinitely. max_stream_duration bounds that at
+#     60 min (M4-11 remaining, D-19a) by resetting every tunnel's stream at that age regardless of
+#     admission state; the next CONNECT is a fresh stream and gets a fresh ext_authz check.
+#   - CONNECT is terminated and forwarded via the dynamic forward proxy to the requested
+#     authority. The authority (hostname) is the hostname telemetry of ADR-0002 Option 1 — logged
+#     without any TLS interception, since it is the plaintext CONNECT target.
+#   - DNS resolution happens here (V4_ONLY), never on the endpoint (DNS-leak control). The
+#     resolver is explicitly Azure's link-local DNS (168.63.129.16), not left to c-ares' default
+#     of reading the host's own /etc/resolv.conf — on this image that points at the local
+#     systemd-resolved stub (127.0.0.53), which the M4-10 uid-scoped nftables rule for Envoy's own
+#     account correctly refuses along with the rest of 127.0.0.0/8. That rule is post-resolution
+#     enforcement for CONNECT *destinations*; it was never meant to reach Envoy's own DNS query,
+#     but a same-host loopback resolver sits inside the range it blocks regardless of intent.
+#     use_resolvers_as_fallback is false so this is the only resolver Envoy ever asks, rather than
+#     one that only sometimes bypasses the blocked default. Found live 2026-09-05: every CONNECT
+#     failed 503 with response_code_details dns_resolution_failure{cares_failure:Could_not_
+#     contact_DNS_servers}, traced via the access log to c-ares silently falling back to a
+#     resolver this account cannot reach.
+#     Both the address and the flag are Azure-only, so the two non-Azure consumers of this same
+#     file rewrite the flag to true rather than keeping a divergent copy: demo/docker-stack (in
+#     envoy-init) and tests/support/Mina.TestSupport/EnvoyProcess.cs. Leave the shipped value
+#     false — flipping it here would hand every real node back to the resolver M4-10 blocks, and
+#     the failure is a plain 503 that looks exactly like a fail-closed refusal.
+#
+# TLS material is provisioned to /etc/mina/tls by the node bootstrap (from Key Vault in
+# production; see cloud-init.yaml). scripts/validate-envoy-config.sh rewrites these paths to a
+# temp dir of throwaway certs so the config can be validated in CI without secrets.
+
+# The admin interface is a Unix socket, not a TCP port. On a forward proxy, "loopback only" is not
+# a boundary: the proxy itself reaches loopback, so a holder of a live session certificate could
+# CONNECT 127.0.0.1:9901 and reach an unauthenticated admin API that exposes certificates, config
+# and /quitquitquit. A pipe is not addressable through CONNECT at all. Mode 0600 keeps it to the
+# service user; the directory comes from RuntimeDirectory=mina in the unit.
+admin:
+  address:
+    pipe: { path: /run/mina/envoy-admin.sock, mode: 384 }  # 384 = 0600
+
+static_resources:
+  listeners:
+  # What the load balancer probes. A TCP probe on 8443 would keep a node in rotation while its
+  # sidecar was down and every tunnel was being refused; this answers 200 only while the admission
+  # cluster is healthy. Plaintext and unauthenticated by design — it discloses one bit about this
+  # host and nothing else, is not routable to anywhere, and the stamp NSG admits it only from the
+  # AzureLoadBalancer tag.
+  - name: health
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8081 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: mina_health
+          codec_type: HTTP1
+          route_config:
+            name: health_only
+            virtual_hosts:
+            - name: health
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                direct_response: { status: 404 }
+          http_filters:
+          - name: envoy.filters.http.health_check
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.health_check.v3.HealthCheck
+              pass_through_mode: false
+              headers:
+              - name: ":path"
+                string_match: { exact: "/healthz" }
+              cluster_min_healthy_percentages:
+                mina_sidecar_authz: { value: 100 }
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  - name: tunnel_ingress
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8443 }
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          require_client_certificate: true
+          common_tls_context:
+            tls_params:
+              tls_minimum_protocol_version: TLSv1_2
+            tls_certificates:
+            - certificate_chain: { filename: /etc/mina/tls/server.crt }
+              private_key: { filename: /etc/mina/tls/server.key }
+            validation_context:
+              trusted_ca: { filename: /etc/mina/tls/ca.crt }
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: mina_tunnel
+          codec_type: AUTO
+          http2_protocol_options:
+            allow_connect: true
+          upgrade_configs:
+          - upgrade_type: CONNECT
+          # Bounds how long an admitted tunnel may stay open after the session behind it is
+          # revoked (M4-11 remaining, THREAT_MODEL residual risk 6): ext_authz decides admission
+          # per CONNECT and is never re-run on an established connection, so without this a
+          # long-lived tunnel opened before revocation — a large download, a websocket — would
+          # carry traffic indefinitely. 3600s (60 min) is the owner's deliberate choice (D-19a,
+          # 2026-09-04) over a tighter cap: it matches the certificate/lease TTL bound that
+          # already governed every tunnel before D-19 added faster admission for *new* ones, so
+          # it does not newly increase the platform's accepted worst case, while a shorter cap
+          # would trade directly against interrupting the long-running research tasks the
+          # platform exists to support. Applies to every stream equally, admitted or not — Envoy
+          # has no mechanism to force-close only a revoked session's tunnel, only every tunnel at
+          # this age.
+          #
+          # max_stream_duration, not max_connection_duration: proved out against a real Envoy
+          # (An_admitted_tunnel_is_force_closed_once_the_connection_duration_cap_elapses) that
+          # max_connection_duration logs "max connection duration reached" on schedule but then
+          # waits for the active stream to end before actually closing anything — exactly backwards
+          # for a CONNECT tunnel, whose one stream *is* the traffic this cap exists to bound, and
+          # which by definition does not end on its own before the cap should act. It would have
+          # bounded nothing. max_stream_duration resets the stream itself once the timer elapses,
+          # regardless of whether it is idle or actively carrying bytes; the agent multiplexes many
+          # browser tabs as separate streams over one shared mTLS connection to this node (ADR-0001
+          # C-tx), so this is also the narrower blast radius — one tab's tunnel resets, not every
+          # tab sharing that connection. The next CONNECT (same or a fresh connection) is a new
+          # stream and gets a fresh ext_authz check like any other new tunnel.
+          common_http_protocol_options:
+            max_stream_duration: 3600s
+          # Hostname telemetry (mina.hostname.v1), written to a file the node sidecar follows and
+          # ships to the control plane. A file, not stdout: logging to stdout put these records in
+          # the journal instead, where nothing read them and they simply accumulated.
+          #
+          # Two loggers, one file. Which one writes a given tunnel's line is decided by the
+          # admission metadata the sidecar returned for it: every admitted session is answered with
+          # {"suppressed": true|false} in the ext_authz response, and the redacted logger below
+          # matches true (counts, no authority) while the full logger matches false. Explicit on
+          # both values rather than one matcher inverted: proved against this Envoy release that
+          # the access-log metadata_filter ignores MetadataMatcher.invert and wrote both lines, so
+          # the sidecar states the value and each logger matches exactly one of them. The CONNECT
+          # target of a suppressed session
+          # therefore never reaches this disk — suppression is enforced here first, at the sidecar
+          # second (TelemetryBatcher withholds whatever still carries a hostname) and at the
+          # control plane third (ingest reduces a suppressed session's items to counts and raises
+          # sensitive_suppression_mismatch if any arrived with one, threat N5). This closes the
+          # residual risk SECURITY_REVIEW_2026-09-01 recorded as "suppressed sessions' destinations
+          # still appear in Envoy's own access log on the node". The 0640 file mode and continuous
+          # consumption stay: what remains in the file is still C3 for ordinary sessions.
+          #
+          # match_if_key_not_found differs deliberately. A refused or errored CONNECT has no ext_authz
+          # metadata at all (nothing admitted it), and a refusal is operational, not browsing
+          # history, so it belongs to the full logger — hence "not found" is false for the
+          # redacted logger and true for the full one. The two are exhaustive and exclusive for
+          # every stream: exactly one line per tunnel, as before. The interop test asserts that
+          # (one line per session, never two).
+          access_log:
+          - name: envoy.access_loggers.file
+            filter:
+              metadata_filter:
+                matcher:
+                  filter: envoy.filters.http.ext_authz
+                  path:
+                  - key: suppressed
+                  value: { bool_match: true }
+                match_if_key_not_found: false
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+              path: /var/log/mina/envoy-access.log
+              # The redacted shape: same schema, no authority field at all. The port is part of the
+              # authority and is withheld with it. The sidecar reads "suppressed" and ships a
+              # counts-only item.
+              log_format:
+                json_format:
+                  schema: mina.hostname.v1
+                  suppressed: "true"
+                  bytes_up: "%BYTES_RECEIVED%"
+                  bytes_down: "%BYTES_SENT%"
+                  duration_ms: "%DURATION%"
+                  response_code: "%RESPONSE_CODE%"
+                  response_code_details: "%RESPONSE_CODE_DETAILS%"
+                  client_cert_uri: "%DOWNSTREAM_PEER_URI_SAN%"
+          - name: envoy.access_loggers.file
+            filter:
+              metadata_filter:
+                matcher:
+                  filter: envoy.filters.http.ext_authz
+                  path:
+                  - key: suppressed
+                  value: { bool_match: false }
+                match_if_key_not_found: true
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+              path: /var/log/mina/envoy-access.log
+              log_format:
+                json_format:
+                  schema: mina.hostname.v1
+                  # The CONNECT target — the hostname telemetry of ADR-0002 Option 1, read without
+                  # any TLS interception since it is the plaintext CONNECT authority.
+                  authority: "%REQ(:AUTHORITY)%"
+                  bytes_up: "%BYTES_RECEIVED%"
+                  bytes_down: "%BYTES_SENT%"
+                  duration_ms: "%DURATION%"
+                  response_code: "%RESPONSE_CODE%"
+                  # Which layer refused a request: ext_authz_denied (session not admitted),
+                  # ext_authz_error (sidecar not answering — the node is failing closed),
+                  # rbac_access_denied (destination policy). Operational, not analyst content.
+                  response_code_details: "%RESPONSE_CODE_DETAILS%"
+                  client_cert_uri: "%DOWNSTREAM_PEER_URI_SAN%"
+          route_config:
+            name: connect_route
+            virtual_hosts:
+            - name: connect
+              domains: ["*"]
+              routes:
+              - match:
+                  connect_matcher: {}
+                route:
+                  cluster: dynamic_forward_proxy
+                  upgrade_configs:
+                  - upgrade_type: CONNECT
+                    connect_config: {}
+          http_filters:
+          # Session admission (M4-11). Runs first: whether this session may tunnel at all is decided
+          # before where it wants to go. The sidecar answers over gRPC on a Unix socket — not a
+          # loopback port, for the same reason the admin interface does not — admitting a session
+          # the control plane currently lists for this region and refusing everything else. Envoy
+          # sets the check's peer principal from the verified certificate's URI SAN, so the session
+          # identity the sidecar judges is the one Envoy verified, not one a client asserted.
+          #
+          # gRPC, not the HTTP authorization service: for a CONNECT, Envoy's HTTP check request is
+          # itself a CONNECT — authority-form, no path — which the sidecar's server closes unread,
+          # refusing every session. Established against this Envoy release in Docker.
+          #
+          # failure_mode_allow is false: a sidecar that is down, slow or unreachable refuses every
+          # tunnel (503, so the access log can tell a failing node from a refused session). Stated
+          # explicitly even though it is the default, because it is the property this filter is for.
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              failure_mode_allow: false
+              status_on_error: { code: ServiceUnavailable }
+              # Nothing about the request reaches the sidecar beyond what the check carries by
+              # construction (the method, and the CONNECT authority as request.http.host, which the
+              # sidecar does not read). No request headers are copied in.
+              allowed_headers:
+                patterns:
+                - exact: ":method"
+              grpc_service:
+                envoy_grpc:
+                  cluster_name: mina_sidecar_authz
+                timeout: 0.5s
+          # Destination policy. Without one, "authenticated forward proxy" means an authenticated
+          # analyst can ask the node to connect anywhere the node can reach — including the Azure
+          # IMDS endpoint at 169.254.169.254, which hands out managed-identity tokens for the Key
+          # Vault holding this node's TLS material, and including the node's own loopback services.
+          # Research egress is for the public internet, so private and link-local space is denied.
+          # Denials are logged like any other request, so an attempt to reach IMDS is visible in
+          # hostname telemetry rather than silent.
+          #
+          # This matches the CONNECT authority, so it stops literal addresses, and it is the layer
+          # that makes an attempt *visible* — a refusal is logged like any other request. It cannot
+          # stop a public DNS name that resolves into private space, because by the time the name is
+          # resolved this filter has already passed the request. The post-resolution control is the
+          # uid-scoped nftables rule in cloud-init (M4-10): it refuses traffic from Envoy's account
+          # to private, loopback and link-local space at the socket, where the real destination is
+          # known. Neither layer is redundant — this one reports, that one enforces.
+          - name: envoy.filters.http.rbac
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+              rules:
+                action: DENY
+                policies:
+                  private_destinations:
+                    principals:
+                    - any: true
+                    permissions:
+                    # Loopback, link-local (Azure IMDS), "this network", and carrier-grade NAT.
+                    #
+                    # Every octet tolerates leading zeros. What decides whether an authority IS one
+                    # of these addresses is the resolver, not this filter, and a literal written
+                    # 0127.0.0.1 or 010.1.2.3 must not walk past a deny written for the canonical
+                    # spelling. Whether a given resolver accepts that form varies by implementation
+                    # and version — which is the point: the deny should not depend on the answer.
+                    # safe_regex matches the whole authority, so each pattern carries its own
+                    # trailing .* to cover the port and anything after it.
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*127\\..*" } } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*169\\.0*254\\..*" } } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*0\\..*" } } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*100\\.0*(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*" } } }
+                    # RFC 1918. Nothing in corporate address space is reachable from an egress node
+                    # today (SR-004) and this keeps it that way if that ever stops being true.
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*10\\..*" } } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*192\\.0*168\\..*" } } }
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*172\\.0*(1[6-9]|2[0-9]|3[01])\\..*" } } }
+                    # Any CONNECT to a resolver port. This is the only layer that can refuse one:
+                    # the nftables rule that permits Envoy's own DNS is scoped by uid, and a
+                    # proxied tunnel runs as that same uid, on the same destination and port, so at
+                    # the socket the two are indistinguishable. Here they are not — Envoy's c-ares
+                    # query is not a CONNECT and never traverses this filter chain, so denying the
+                    # port costs the resolver nothing. Research browsing has no legitimate CONNECT
+                    # to :53: DNS is resolved at the node by design (DNS-leak control), so a tunnel
+                    # to a resolver is either the platform resolver below or an off-node one, and
+                    # both are exactly what that design exists to prevent. :853 is DNS-over-TLS and
+                    # :5353 is mDNS; they are the same tunnel with a different number on it. Not
+                    # covered, and not coverable here: DNS-over-HTTPS is :443 and indistinguishable
+                    # from ordinary browsing at this layer — that one is handled on the endpoint, by
+                    # the DoH policy in research-browser-flags.json.
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: ".*:(53|853|5353)" } } }
+                    # Azure's platform address. It hosts WireServer goal state and extension
+                    # configuration on :80 and the host GA plugin on :32526 — the other half of what
+                    # IMDS above is denied for. It is not in any range the list already covers, and
+                    # it became reachable-by-name the moment this node's own resolver was pinned to
+                    # it, so it is named here explicitly.
+                    #
+                    # A regex rather than a prefix, because what decides whether an authority IS
+                    # this address is c-ares, not this filter, and c-ares reads zero-padded octets
+                    # as decimal: 168.063.129.016 resolves to 168.63.129.16 and would sail past a
+                    # literal prefix match. The optional-port group is what keeps 168.63.129.160-169
+                    # — ordinary public addresses an analyst may legitimately need — out of it,
+                    # since only a colon or end-of-string may follow the final 16.
+                    - header: { name: ":authority", string_match: { safe_regex: { regex: "0*168\\.0*63\\.0*129\\.0*16(:[0-9]+)?" } } }
+                    # Names that resolve to the node itself.
+                    - header: { name: ":authority", string_match: { prefix: "localhost", ignore_case: true } }
+                    # IPv6 literals. DNS here is V4_ONLY, so a bracketed authority is either an
+                    # attempt to reach something by address or an IPv6 leak; neither is wanted.
+                    - header: { name: ":authority", string_match: { prefix: "[" } }
+          - name: envoy.filters.http.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+              dns_cache_config:
+                name: mina_dns_cache
+                dns_lookup_family: V4_ONLY
+                typed_dns_resolver_config:
+                  name: envoy.network.dns_resolver.cares
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
+                    resolvers:
+                    - socket_address: { address: 168.63.129.16, port_value: 53 }
+                    use_resolvers_as_fallback: false
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  # The node sidecar's admission socket. A pipe, so it is not addressable through CONNECT and
+  # cannot be reached by anything that is not on this host as a user permitted to open it.
+  # Actively health-checked against the sidecar's /healthz, which is healthy only while its
+  # session view is loaded and fresh: an unhealthy sidecar takes this cluster to zero, the
+  # admission check errors (503, fail closed), and the health listener below tells the load
+  # balancer the same thing so the node leaves rotation instead of refusing traffic it is sent.
+  - name: mina_sidecar_authz
+    type: STATIC
+    connect_timeout: 0.25s
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config:
+          http2_protocol_options: {}
+    health_checks:
+    - timeout: 2s
+      interval: 5s
+      no_traffic_interval: 5s
+      unhealthy_threshold: 2
+      healthy_threshold: 1
+      http_health_check:
+        path: /healthz
+        # The cluster's protocol_options above make ext_authz's own traffic HTTP/2, but the active
+        # health checker does not inherit that — HealthCheck.http_health_check.codec_client_type
+        # defaults to HTTP1 regardless of the cluster's configured protocol. Left at the default,
+        # every check was answered "400: An HTTP/1.x request was sent to an HTTP/2 only endpoint"
+        # and the cluster stayed permanently unhealthy, which took the health listener below down
+        # with it — discovered by actually running this against the sidecar, not by inspection.
+        codec_client_type: HTTP2
+    load_assignment:
+      cluster_name: mina_sidecar_authz
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              pipe: { path: /run/mina-sidecar/authz.sock }
+
+  - name: dynamic_forward_proxy
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_forward_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+        dns_cache_config:
+          name: mina_dns_cache
+          dns_lookup_family: V4_ONLY
+          typed_dns_resolver_config:
+            name: envoy.network.dns_resolver.cares
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
+              resolvers:
+              - socket_address: { address: 168.63.129.16, port_value: 53 }
+              use_resolvers_as_fallback: false

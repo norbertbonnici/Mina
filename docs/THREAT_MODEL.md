@@ -1,0 +1,280 @@
+# Threat Model
+
+Status: **Phase 0 expansion — Proposed** (baseline retained and extended; expand again whenever
+the architecture changes)
+Scope: architecture per `docs/ARCHITECTURE.md` (ADR-0001 Option C/C2, ADR-0002 Option 1, hybrid
+hosting per ADR-0006 — revised 2026-09-02).
+
+## 1. Method
+
+STRIDE per trust boundary (boundaries as listed in ARCHITECTURE/§ trust boundaries of the
+original baseline), plus scenario analysis for the required cases and sector-specific abuse
+cases. Each threat maps to mitigations and to the test that proves the mitigation
+(`docs/TEST_STRATEGY.md`, `docs/ACCEPTANCE_CRITERIA.md`).
+
+## 2. Assets (unchanged baseline + additions)
+
+Analyst identity and Entra tokens; managed endpoint and privileged agent; session credentials
+(client certs, internal CA key in Key Vault); the on-premises control plane (Proxmox DMZ VLAN, its
+published node-facing endpoint, SQL Server) and the Azure egress nodes; the Arc managed identities
+of the control-plane hosts; public egress IPs (and their **reputation**); URL/hostname telemetry; sensitive-session requests/justifications;
+audit records; management and break-glass credentials; IaC/CI/CD/signing material;
+**subject-inference data** (any data from which research subjects can be inferred — hostnames,
+justification text, timing patterns).
+
+## 3. Threat actors (unchanged baseline)
+
+External attacker; malicious website; compromised endpoint; stolen token/session; malicious or
+curious authorised analyst; malicious insider/administrator; compromised Azure workload or
+dependency; compromised on-premises host or Proxmox/hypervisor administrator (ADR-0006);
+supply-chain attacker. Added: **research target performing counter-surveillance**
+(observes visits, probes egress IPs, attempts correlation).
+
+## 4. Boundary analysis (STRIDE highlights)
+
+### B1. Analyst ↔ privileged endpoint components (agent, WFP, IPC)
+- **E (EoP):** named-pipe command abuse → agent performs privileged action for unauthorised
+  caller. *Mitigate:* SDDL-restricted pipe, per-message authorisation in agent, no
+  config-driven code paths, signed binaries, Intune-managed config only. *Test:* IPC fuzz +
+  privilege boundary tests.
+- **T (Tamper):** analyst strips launch flags or edits profile. *Mitigate:* C2 WFP
+  default-block makes flag-stripping inert; agent detects unmanaged research-browser
+  instances. *Test:* manual-launch leak test.
+- **S (Spoof):** foreign process connects to loopback proxy to ride the tunnel (local open
+  proxy). *Mitigate:* peer-PID → image-path/user-data-dir verification; per-session proxy
+  port; refuse when no session. **The PID resolved from the connection table is Chromium's
+  network-service utility subprocess, not the main browser process** (found live 2026-09-05): the
+  utility process owns the loopback socket, and it re-serialises `--user-data-dir` with quotes even
+  when the main process was launched without them. So the check is verifying a subprocess of the
+  expected browser — same image path, same profile value, different PID from the one that was
+  launched — and any matcher here has to read what *that* process reports. The value is compared as
+  a resolved path against a Win32 `CommandLineToArgvW` parse, not as a substring of the raw command
+  line: an unanchored substring admitted any profile directory the configured one is a prefix of
+  (`…\research-profile-evil`), which is precisely the differently-profiled second instance this
+  control exists to refuse. *Test:* rogue-client connect attempt; `WindowsPeerAuthorizerTests`
+  covers the quoted form, sibling directories, traversal, a second claim on the same line, and the
+  expected text embedded in another switch.
+- **I (Info disclosure):** a research page reaches services on the analyst's own machine —
+  a local dev server, an admin console bound to 127.0.0.1, the agent's own IPC surface —
+  without going through the agent's proxy at all. Two ordinary behaviours meet badly:
+  Chromium exempts loopback from proxying by default even under a fixed `--proxy-server`,
+  and Windows does not filter loopback traffic through WFP, so the C2 image-path block that
+  stops everything else is not a backstop here (confirmed live: case 4 in the verification
+  below still reaches the local service with the block in force). Found 2026-09-04 while
+  verifying an unrelated M1-5 item, not designed for in advance. *Mitigate:*
+  `--proxy-bypass-list=<-loopback>` in `research-browser-flags.json`, which forces loopback
+  destinations through the configured proxy like any other address; the proxy then meets the
+  node's own refusal of loopback/private destinations at egress (M4-10) rather than a direct
+  local connection. *Test:* `Invoke-LoopbackBypassVerification.ps1` — a dead-proxy
+  discriminator (any successful reach proves the proxy was bypassed, not used) across 4 cases;
+  re-run 2026-09-04, verdict unchanged (`GAP CONFIRMED, FLAG WORKS`).
+
+### B2. Research context ↔ ordinary applications
+- **I (Info disclosure):** research profile data (cookies, history) exits via corporate egress
+  through a mis-launched browser. *Mitigate:* C2 network containment; profile data
+  minimisation (no sync). *Test:* AC-002/AC-004 negative paths.
+- Ordinary apps accidentally captured: impossible by construction (nothing else references the
+  proxy/rules). *Test:* AC-002.
+
+### B3. Endpoint ↔ Azure ingress
+- **S:** stolen client cert reused elsewhere. *Mitigate:* 60-min TTL and renewal requiring a fresh
+  device-bound Entra token, **and** node-side admission (D-19, M4-11): the certificate carries its
+  session id in a SAN URI, which Envoy passes to the sidecar as the verified peer principal, and the
+  sidecar refuses any session the control plane does not currently list. A stolen certificate for a
+  revoked or ended session is refused at the node within one refresh interval (~15 s) rather than
+  working until it expires — the residual is a certificate stolen and reused *before* the session is
+  revoked, which admission cannot distinguish from the legitimate holder, and a tunnel already open
+  at the moment of revocation, which is not re-checked but is bounded to 60 min by
+  `max_stream_duration` (accepted limitation, D-19/D-19a). *Test:* token/cert expiry tests;
+  `EnvoySessionAdmissionTests` measures the refusal against the refresh interval, the fail-closed
+  case against the sidecar being unreachable, and the duration cap resetting a still-admitted
+  tunnel's stream, all against a real Envoy.
+- **D (DoS):** ingress flooding. *Mitigate:* 443-only, optional corp-CIDR allowlist, LB/NSG,
+  autoscale headroom, alerting. *Test:* load test + alert check.
+
+### B4. Data plane ↔ control plane
+- **T:** compromised node lies about telemetry or ignores suppression flags. *Mitigate:*
+  nodes are least-privilege (managed identity scoped to read-allowlist/write-telemetry only),
+  immutable/rebuildable, monitored (Wazuh agent); suppression state is logged both at control
+  plane (authoritative) and node ack; discrepancy alerting. *Test:* suppression e2e + node
+  integrity monitoring.
+- **E:** node's managed identity abused to read governance data. *Mitigate:* API scopes the
+  node identity to its own region's allowlist + telemetry ingest only. *Test:* RBAC boundary
+  tests.
+- **I/E (published endpoint, ADR-0006):** the node-facing listener is internet-exposed from the
+  on-premises DMZ, so an attacker probes it for the portal, the audit read API or the route table.
+  *Mitigate:* split listeners discriminated by the accepting port, default deny for undeclared
+  endpoints (a wrong-method request cannot enumerate the management routes), the check running
+  before authentication; the reverse proxy has no server block for the management port; per-host
+  firewall admits the node port only from the proxy; public-CA TLS, rate limiting, optional source
+  restriction to the stamps' static NAT prefixes; the DMZ is firewalled from the corporate LAN.
+  *Test:* listener-separation suite (M4-16) + external scan of the published endpoint.
+- **D:** loss of the published endpoint stops allowlist pulls, telemetry and session renewal.
+  Fails closed within one lease period — availability, not safety (OPERATIONS runbook).
+
+### B5. Control plane ↔ Entra
+- **S:** forged/replayed tokens. *Mitigate:* standard validation (issuer, audience, signing,
+  lifetime), device claims required, CA compliant-device policy. *Test:* tampered-token suite.
+- **R (Repudiation):** disputed approvals. *Mitigate:* immutable audit export (WORM), approver
+  identity + timestamps in every transition, Wazuh forwarding. *Test:* audit completeness.
+
+### B6. Platform ↔ Wazuh/SigNoz
+- **I:** sensitive URLs leak into observability. *Mitigate:* Wazuh path carries no
+  URL/hostname content by design; SigNoz path has a scrub processor; schema review gate.
+  *Test:* AC-014 leak scan of exported telemetry.
+- **D:** integration outage hides security events. *Mitigate:* local buffering, delivery-lag
+  metrics + alerts; policy option to refuse new sessions if the audit write path is down.
+
+### B7. Analyst ↔ manager/approver roles
+- **E:** self-approval or role confusion. *Mitigate:* server-side rejection of
+  requester==approver; app-role checks in API not UI; periodic access review. *Test:*
+  authorisation matrix tests.
+- Collusion (approver rubber-stamps): governance issue — mitigated by audit visibility,
+  approval-rate reporting to management, no permanent exemptions.
+
+### B8. Normal admin ↔ break glass
+- **E/T:** break-glass creds abused silently. *Mitigate:* vaulted offline custody, sign-in +
+  activity-log export → high-severity Wazuh alerts, post-use review runbook, PIM approval for
+  the RBAC group. *Test:* break-glass alerting drill (AC-015).
+- **Gap (ADR-0006), narrowed 2026-09-04 (D-10a — PROPOSED, not yet owner-ratified):** the Azure
+  RBAC group cannot reach a Proxmox-hosted API, portal or database — but a non-Entra path already
+  does, the SSH key that is `root` on Proxmox and `mina-admin` on the control-plane VMs (B10). That
+  is not "no mechanism," it is the wrong shape: not vaulted, not separate from routine use, not
+  alerted on. Proposed, not built, not decided (M4-21): a dedicated, vaulted Proxmox-level
+  credential, alerted at high severity once M3-5 (Wazuh on-premises delivery) exists to carry the
+  signal — see D-10a for a live code/doc conflict the proposal surfaced (RDP/WinRM's status on the
+  Windows hosts is asserted in prose, not enforced by any Terraform here) and a scaffold that was
+  built, tested, found to force a live-VM rebuild, and reverted rather than shipped.
+
+### B9. On-premises control plane ↔ Azure retained services (Key Vault, immutable blob)
+- **S/E:** a compromised control-plane host uses its Arc managed identity to sign certificates or
+  read anchors. *Mitigate:* identity scoped to sign/get on the CA key and write on the anchor
+  container only; Key Vault and storage firewalls admit only the control plane's egress addresses;
+  CA key use and anchor access recorded in Log Analytics (M4-24); ARM-level tamper (immutability
+  policy removal, vault purge) needs the subscription activity-log export (M4-26). *Test:* RBAC
+  boundary tests; alert drill on anomalous signing volume.
+- **T (on-premises administrator):** a Proxmox or SQL administrator alters audit rows or VM disks.
+  *Mitigate:* hash-chained audit trail anchored in write-once Azure storage the same administrator
+  does not control — D-18 exists for exactly this — and `/api/audit/verify`. *Test:* audit
+  completeness against anchors; tamper-then-verify.
+- **D:** Arc agent failure removes SQL authentication and Key Vault access at once, with no stored
+  credential to fall back on by design. Fails closed; OPERATIONS runbook.
+
+### B10. Administration workstation ↔ every plane
+
+Added 2026-09-04. The machine an administrator works from holds, at the same time, the SSH key
+that is `root` on the Proxmox host and `mina-admin` on the control-plane VMs, an authenticated
+Azure session for the subscription holding the CA signing key and the audit anchors, and the
+credentials for the Terraform state. **No component modelled above holds credentials for all three
+planes at once**, which makes this the shortest path to the platform's most sensitive assets — and
+it was not modelled at all until a permissions failure surfaced it by accident (M4-30). The
+boundary is a property of the administrative role, not of one machine: it applies to whichever
+host an administrator actually uses, in the lab today and in production operations later.
+
+- **E:** code executing as the administrator inherits hypervisor, control-plane and subscription
+  authority in a single step — it does not cross the boundaries above, it starts inside all of
+  them. *Mitigate:* D-21 removes one class of foreign code from the host, which is narrower than
+  it sounds — it says what may not run there, not that what remains is contained. For the general
+  case there is still no platform-specific control beyond ordinary endpoint hygiene, and saying so
+  plainly is the point of this entry. *Test:* none for the general case; D-21 compliance is
+  checkable, an administrator's own session is not. Whether these credentials belong on a
+  general-purpose workstation at all, rather than a dedicated privileged-access host, is open
+  (M4-30).
+- **T:** the same session applies Terraform and runs the CA bootstrap tool, so it can both change
+  infrastructure and, holding Secrets Officer on the vault, re-root the internal CA. D-20 stops the
+  *API* from re-rooting the platform; it does not constrain the operator, and was never intended
+  to. *Mitigate:* CA key use and secret access are recorded in Log Analytics (M4-24), so a re-root
+  is detectable after the fact rather than prevented. *Test:* alert drill on a CA certificate
+  write.
+- **E (third-party code on the same host):** self-hosted CI runners for unrelated repositories ran
+  on this workstation, and the runner installer grants its service account FullControl over the
+  administrator's whole profile — so a workflow change in a repository having nothing to do with
+  Mina could read the hypervisor root key and live Azure tokens for this platform's subscription.
+  Found and fixed 2026-09-04 (M4-30): runner relocated out of the profile, profile grant removed,
+  key ACL tightened. Note it surfaced only because OpenSSH refuses a key with loose permissions —
+  nothing checks the token store, so that half would not have announced itself. *Mitigate:*
+  **D-21 (2026-09-04) — administration hosts do not run third-party CI**, where an administration
+  host is defined by the credentials it holds rather than by who owns it. The mechanism matters
+  more than the intent: nobody granted that runner access to the key, the installer's own default
+  did, so a control that assumes nothing is installed with reasonable defaults is not a control.
+  *Test:* `tests/security/admin-host/Invoke-AdminHostExposureProbe.ps1` (2026-09-04) — asserts no
+  principal outside owner/SYSTEM/Administrators can read the credential stores, and that no CI
+  agent for another system is installed. Its ACL predicate closes group membership to leaf
+  principals and names the leaf, because the ACE that caused this finding named a *group* whose
+  member was NETWORK SERVICE and a string comparison would report clean. First run on ADMIN-WS01:
+  VIOLATION — 9/9 stores clean, the unrelated CI runner OPERATIONAL, and an orphaned FullControl ACE
+  on the decommissioned runner tree left behind by its own uninstaller, since purged.
+- **R:** actions taken here appear as the administrator or the host's Arc identity, so attribution
+  reaches a role and a machine rather than a person. *Mitigate:* audit anchors are in write-once
+  Azure storage (D-18), so even this principal cannot rewrite history undetectably; ARM-level
+  tamper still needs the subscription activity-log export (M4-26).
+
+## 5. Required scenarios (baseline retained, responses updated to the design)
+
+| Threat | Design response |
+|---|---|
+| Protected path fails, Edge falls back to normal IP | Fixed proxy (no DIRECT) + loopback gated on session + C2 WFP block; automated kill-tunnel e2e (AC-004) |
+| DNS bypass exposes org resolver/IP | Hostname-in-CONNECT ⇒ egress-side resolution; WFP blocks direct 53/DoH from research binary; DNS canary test (AC-005) |
+| IPv6 bypasses IPv4 tunnel | No local resolution; WFP blocks direct v6; IPv4-only egress at MVP; dual-stack tests (AC-006) |
+| WebRTC exposes address/path | IP-handling policy + WFP UDP block + mDNS obfuscation; harness test (AC-007) |
+| Analyst disables logging locally | Telemetry originates at egress node, not endpoint; nothing to disable client-side (ADR-0002 Opt 1) |
+| Analyst obtains suppression without approval | Server-side state machine; activation requires APPROVED record, approver ≠ requester (AC-010) |
+| Approval never expires | TTL mandatory; expiry ends the approval always, and terminates the session when suppression was activated (D-06a); scheduler + clock-skew tests (AC-011) |
+| Egress node becomes open proxy | mTLS against the internal CA **and** node-side session admission (D-19, M4-11); no unauthenticated listener; destination deny-list for private/link-local space; external scans (AC-016). A revoked or unknown session's certificate is refused within one refresh interval (~15 s), not the certificate TTL |
+| Egress node reaches internal networks | NSG/route deny + no peering + automated probes (AC-017). Unchanged by ADR-0006, which deliberately declined the tunnel route: the on-premises control plane is reached at a published DMZ endpoint over the public internet, so this stays a blanket denial rather than becoming an allowlist |
+| Entra token stolen | Short session certs renewable only with fresh device-bound tokens; revocation is refusal to renew. Since D-19 (M4-11) the node also refuses to admit *new* tunnels for a revoked session within one refresh interval (~15 s) — an already-open tunnel, which admission does not re-check, is bounded by the 60-minute `max_stream_duration` cap (D-19a) instead, not by the lease TTL itself |
+| Egress host compromised | Minimal hardened image, no inbound mgmt from internet, least-privilege identity, Wazuh agent, disposable rebuild from IaC. Blast radius is unchanged by ADR-0006: the node's reachable set is still the public internet plus one published control-plane endpoint, which is what it was when that endpoint was in Azure. What the endpoint exposes is bounded by the split listeners — the published listener carries only allowlist and telemetry ingest, never the portal or the audit read API |
+| Audit logs altered/deleted | Append-only writes, WORM export, restricted principals, Wazuh forwarding (tamper evidence). Since ADR-0006 the store is on on-premises infrastructure and the anchors are in Azure immutable storage, so an on-premises administrator cannot make an alteration unanchored (D-18); anchor access is itself logged (M4-24) |
+| Published control-plane endpoint used to reach the portal, audit API or admin routes | Split listeners enforced by accepting port with default deny; the proxy has no management-port server block; host firewall; 404 before authentication (ADR-0006 constraint 1, M4-16) — see B4 |
+| Break-glass abused | §4/B8 |
+| Dependency compromised | SBOM + lockfiles (NuGet, container images, Envoy builds), pinned versions, scanning in CI, signed artefacts (SR-012) |
+
+## 6. Additional scenarios identified in Phase 0
+
+| # | Threat | Response |
+|---|---|---|
+| N1 | **Cross-investigation correlation:** targets observe the small set of egress IPs and correlate visits across analysts/cases | Accepted MVP risk (documented to analysts); region selection gives coarse separation; post-MVP IP rotation (Phase 5) is the real mitigation; never present platform as anonymity |
+| N2 | **Egress IP reputation/blocklisting** (targets or CDNs block/flag Azure IPs) | Operational monitoring, region switch as workaround, IP-prefix headroom for replacement; note some sites treat cloud IPs with suspicion — inherent limitation |
+| N3 | Malware on endpoint uses analyst's live session to browse via research egress | Loopback PID checks raise the bar (not absolute — malware could inject into the browser); compensations: compliant-device requirement (EDR), telemetry attribution to device, hostname audit anomalies |
+| N4 | Justification text contains operational secrets, leaks via approval UI/notifications | Guidance: reference case numbers, not content; approver UI access-controlled; justifications classified as subject-inference data (LOGGING_AND_PRIVACY data classes) |
+| N5 | Suppression-flag failure open (node keeps logging during approved sensitive session) | Node ack + control-plane verification; alert on discrepancy; defined incident handling (purge mis-collected records under DPO procedure) |
+| N6 | Terraform state exposes secrets/topology | Remote state in access-controlled storage with encryption; no secrets in state (managed identities/Key Vault); state access audited |
+| N7 | CI/CD compromise ships malicious agent (signed) to all analyst endpoints | Protected branches, review gates, isolated signing (cert in HSM/KV, signing step approval-gated), SBOM diff alerts; Intune rollout rings |
+| N8 | Envoy CVE on the exposed listener | 443-only + mTLS-first handshake limits pre-auth surface; fast-patch pipeline (rebuild stamp); CVE watch |
+| N9 | Admin quietly widens region list or policy | Policy changes are audited high-visibility events to Wazuh; IaC + PR review for infra-level change |
+| N10 | Hostname telemetry itself becomes a surveillance tool against analysts | Purpose limitation + access control on telemetry schema; access to telemetry is itself audited; retention minimised (D-09). Built 2026-09-23: M3-8 (browsing-data review view) — a dedicated role separate from `MinaApprover`, a `telemetry_viewed` audit event on every query, and a guardrail against one query spanning every analyst's full history at once |
+| N11 | Time-of-check gaps at browser startup (traffic before proxy/rules ready) | C2 rules are persistent (pre-exist launch); agent spawns browser only after listener up; startup capture test. **Measured 2026-09-04** (ADR-0001 register item 4, `tests/security/windows-enforcement/Invoke-StartupLeakVerification.ps1`): with enforcement in force before spawn the research browser reached **nothing**; unfiltered it reached **9 third-party endpoints** (Microsoft, Google, Akamai) that nothing asked for, and a rule applied just **2 s late** still let **12** escape. The gap is real and small — which is why the rules must persist rather than be raised per session |
+| N12 | Endpoint DNS cache/prefetch leaks research names before proxying | Browser prefetch/preconnect disabled via flags for research instance; WFP DNS block for the binary; verify in Phase 1 |
+| N13 | Proxmox API token or the on-premises Terraform state exposed (ADR-0006) | Token read from the environment only — never a variable, tfvars or state; state in the same access-controlled Azure storage as the Azure environments (N6); cloud-init carries no secrets |
+| N14 | DMZ segment compromised via the published endpoint lands inside the organisation's perimeter | DMZ VLAN firewalled from the corporate LAN with only the platform's flows crossing; the endpoint carries two route families and nothing else; treated as internet-exposed infrastructure (patching, monitoring, rate limiting). Preferred over the tunnel alternative, where a compromised *egress node* would have had a routed corporate path |
+| N15 | **Node artifact store reachable from any network:** the blob a booting egress node fetches its sidecar binary from was open to the internet, so its RBAC grant was the only thing between an attacker and the binary every node executes as root. A write would be an N7-class supply-chain compromise reaching every node in the stamp at its next boot; a read discloses the build | RBAC-only (no shared keys, no SAS, private container) and a SHA-256 the node verifies before executing — the real supply-chain control — but neither is a network control. Closed 2026-09-06, applied and verified 2026-09-07 (D-22): the account denies public networks, the node enters over a Private Link endpoint, and the IP rule carries only the on-premises publisher. Verified from the node itself — resolves to the endpoint's VNet address and reads the blob over it. Note for anyone repeating this elsewhere: the endpoint's address is RFC1918, so the stamp NSG's own egress denies (priorities 110-113) block it until an explicit `/32` allow is added above them; without that the node resolves the account and then cannot reach it, and fails closed with no sidecar. Note the residual asymmetry: `publish-sidecar.sh`'s upload path remains an IP-plus-RBAC control, so a compromise of the publisher workstation (B10) still reaches the binary |
+
+## 7. Residual risks (accepted, to be re-reviewed at production gate)
+
+1. N1/N2 (correlation, cloud-IP reputation) — inherent until rotation; documented limitation.
+2. C1-only residual (if C2 rejected): manual research-profile launch leak — detective controls.
+3. Browser-process compromise rides the tunnel as the analyst (N3) — bounded by EDR/compliance.
+4. AAAA-only destinations unreachable (IPv4-only egress at MVP).
+5. Control-plane outage pauses new sessions and stops renewals within one lease period
+   (availability, not safety). Since ADR-0006 that availability is the organisation's to provide: one of
+   each host today (M4-15), HA and backup/restore in M4-22.
+6. **A tunnel open at the moment of revocation is bounded, not closed immediately** (D-19/D-19a,
+   M4-11): Envoy decides admission per CONNECT and does not re-check an established connection, so
+   a long-lived tunnel — a large download, a websocket, a persistent connection to the destination
+   — opened before a session was revoked keeps carrying traffic until it closes on its own or until
+   `max_stream_duration` (60 min, tunnel listener) resets its stream, whichever is first. Reduced
+   from unbounded to 60 minutes rather than eliminated: a tighter cap (15 or 30 min) was considered
+   and declined (BACKLOG M4-11, D-19a, 2026-09-04) because it would trade off against interrupting
+   exactly the long-running research tasks the platform exists to support, and 60 min does not newly
+   increase the platform's accepted worst case — it matches the certificate/lease TTL bound that
+   governed every tunnel before D-19 existed.
+
+## 8. Security testing required
+
+Baseline list retained (DNS, IPv4/IPv6, WebRTC, tunnel/control failure, region authz,
+open-proxy scans, RFC1918 reachability, suppression authz/expiry, role boundaries, break-glass
+alerting, token expiry/revocation) — concretised with tooling, environments and evidence
+mapping in `docs/TEST_STRATEGY.md`. Additions from §6: rogue loopback client, IPC fuzzing,
+startup-capture, prefetch-leak, suppression fail-open discrepancy, SigNoz/Wazuh content-leak
+scans, signing/SBOM pipeline checks; from ADR-0006: listener separation on the published endpoint,
+external scan of that endpoint, Arc identity scope, tamper-then-verify against the anchors.

@@ -1,0 +1,120 @@
+namespace Mina.EndpointAgent.Configuration;
+
+/// <summary>Endpoint-agent configuration, deployed with the signed package via Intune.</summary>
+public sealed class MinaAgentOptions
+{
+    public const string Section = "Mina:Agent";
+
+    /// <summary>Base address of the control-plane API.</summary>
+    public Uri? ControlPlaneBaseAddress { get; set; }
+
+    /// <summary>Egress region the analyst has selected. The control plane re-validates it (AC-008).</summary>
+    public string Region { get; set; } = string.Empty;
+
+    /// <summary>
+    /// PEM of Mina's internal CA, used to validate the egress server certificate. It is delivered
+    /// with the agent package (out of band) rather than fetched from the control plane, so the
+    /// tunnel's trust anchor does not depend on the same channel it authenticates.
+    /// </summary>
+    public string EgressCaCertificatePem { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Loopback port for the CONNECT proxy. 0 picks a free port, which is the better default: the
+    /// agent launches the research browser and passes it the actual port, so nothing needs to
+    /// predict it.
+    /// </summary>
+    public int LoopbackPort { get; set; }
+
+    /// <summary>Renew once less than this remains of the lease.</summary>
+    public TimeSpan RenewMargin { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>How often the agent checks session health and renewal.</summary>
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Wait before the first retry after the protected path fails.</summary>
+    public TimeSpan RetryInitialDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Longest wait between retries. The backoff doubles up to this; it never gives up, because a
+    /// path that stays closed is the safe state and the analyst can see exactly why.
+    /// </summary>
+    public TimeSpan RetryMaxDelay { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>How long the agent reuses the control plane's region list before refetching.</summary>
+    public TimeSpan RegionCacheLifetime { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// How often the agent re-reads an undecided sensitive request. Fast enough that an approval
+    /// shows up while the analyst is still looking at the panel; slow enough that a tray polling
+    /// once a second does not become a control-plane call once a second.
+    /// </summary>
+    public TimeSpan SensitivePollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Longest suppression window the tray may ask for. The control plane holds the real policy
+    /// ceiling; this only stops the agent forwarding an obviously out-of-range request.
+    /// </summary>
+    public int MaxSensitiveRequestMinutes { get; set; } = 240;
+
+    /// <summary>Settings for the pipe the per-user tray connects on.</summary>
+    public TrayPipeOptions TrayPipe { get; set; } = new();
+
+    /// <summary>
+    /// How often <see cref="Proxy.BrowserIntegrityMonitor"/> re-checks the WFP containment rule and
+    /// scans for an unmanaged or under-flagged research-browser process (M2-4). Coarser than
+    /// <see cref="PollInterval"/> on purpose: each pass shells out to PowerShell for the firewall
+    /// check and enumerates every process on the host over WMI for the browser check, real work
+    /// worth spacing out rather than a cheap in-memory poll.
+    /// </summary>
+    public TimeSpan IntegrityCheckInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The research browser instance this agent's loopback proxy will admit (M2-4, THREAT_MODEL
+    /// B1). Values must match <c>edge-integration/research-browser-flags.json</c> exactly — the
+    /// tray is what actually launches the browser with that file's flags (ARCHITECTURE §3.1's
+    /// session-0 decision: the agent cannot do it itself), this is what the agent checks a
+    /// connecting peer against, and a mismatch between the two silently admits nothing or admits
+    /// the wrong thing.
+    /// </summary>
+    public ResearchBrowserOptions ResearchBrowser { get; set; } = new();
+}
+
+/// <summary>The local IPC surface the tray uses (ARCHITECTURE §3.1).</summary>
+public sealed class TrayPipeOptions
+{
+    /// <summary>
+    /// Whether to listen at all. A deployment with no tray — a kiosk, or a test host — should not
+    /// carry a local endpoint nothing consumes.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Concurrent pipe instances. Small on purpose: one interactive user needs one, and a handful
+    /// of spares absorbs reconnects without giving a local process many sockets to hold open.
+    /// </summary>
+    public int Instances { get; set; } = 4;
+}
+
+/// <summary>
+/// Identifies the one process the loopback proxy will serve. Both fields together, not either
+/// alone: M1-5 found live that a WFP rule scoped to an image path alone still admits a second,
+/// differently-profiled instance of that same binary, which is exactly the "ride the tunnel"
+/// attack THREAT_MODEL B1 describes — the profile directory is what tells two instances of the
+/// same browser apart.
+/// </summary>
+public sealed class ResearchBrowserOptions
+{
+    /// <summary>
+    /// Full path to the research browser's executable (ADR-0001 variant C2 — a second Edge
+    /// installation at its own path, e.g. Edge Beta). Must match
+    /// <c>research-browser-flags.json</c>'s <c>researchBrowser.imagePath</c> exactly.
+    /// </summary>
+    public string ImagePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The dedicated research profile directory the agent launches the browser with
+    /// (<c>--user-data-dir</c>). Must match what actually gets passed at launch — this is checked
+    /// against the connecting process's own command line, not assumed from configuration alone.
+    /// </summary>
+    public string ProfileDirectory { get; set; } = string.Empty;
+}

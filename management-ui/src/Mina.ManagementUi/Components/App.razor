@@ -1,0 +1,22 @@
+@* Root document. Static server rendering throughout: an admin console needs no persistent
+   circuit, and every screen stays a plain request/response that is simple to reason about and
+   to test. *@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mina management</title>
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+</body>
+
+</html>

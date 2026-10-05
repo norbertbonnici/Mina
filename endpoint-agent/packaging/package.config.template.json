@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Deployment-specific values baked into an M2-5 endpoint package at build time.",
+    "Copy to package.config.json (gitignored), fill in, and pass with",
+    "Build-MinaEndpointPackage.ps1 -ConfigPath. Never commit a filled-in copy: the",
+    "control-plane address and tenant identifiers are environment facts, not source.",
+    "",
+    "Deliberately ABSENT: the research browser's image path. It is read from",
+    "edge-integration/research-browser-flags.json, the file the tray actually launches",
+    "the browser with, so the agent's WFP rule and peer check cannot disagree with the",
+    "launch itself. Re-typing it here would create exactly the drift M2-4's own remarks",
+    "warn about -- a rule that looks applied while covering nothing."
+  ],
+
+  "packageVersion": "0.1.0",
+
+  "publisher": "REPLACE-WITH-ORGANISATION-NAME",
+  "_publisherComment": "Shown as the app's publisher in Intune and the Company Portal: the organisation deploying Mina -- the organisation's name in production, the lab's own name in a lab tenant.",
+
+  "controlPlane": {
+    "baseAddress": "https://REPLACE.example.org",
+    "_comment": "Mina:Agent:ControlPlaneBaseAddress. The corporate-facing listener (ADR-0006, on premises)."
+  },
+
+  "region": "westeurope",
+
+  "egressCaCertificatePemPath": "REPLACE\\path\\to\\mina-internal-ca.pem",
+  "_egressCaComment": [
+    "Mina:Agent:EgressCaCertificatePem. Read at build time and embedded in the package, so the",
+    "tunnel's trust anchor does not arrive over the channel it authenticates (MinaAgentOptions).",
+    "This is the CA certificate only -- never the signing key, which lives in Key Vault (D-18)."
+  ],
+
+  "entra": {
+    "clientId": "REPLACE-WITH-APP-CLIENT-ID",
+    "tenantId": "REPLACE-WITH-TENANT-ID",
+    "_comment": "Mina:Tray:ClientId / TenantId -- the tray's WAM broker sign-in (M2-4). Public client, no secret."
+  },
+
+  "researchProfileDirectory": "C:\\ProgramData\\Mina\\ResearchProfile",
+  "_researchProfileComment": [
+    "ONE value, written to both Mina:Agent:ResearchBrowser:ProfileDirectory and",
+    "Mina:Tray:ResearchProfileDirectory. WindowsPeerAuthorizer matches --user-data-dir as an",
+    "exact literal string with no environment-variable expansion on either side, so the two",
+    "must be byte-identical; writing them from a single value makes that structural rather",
+    "than something to remember. Machine-wide by decision (2026-09-05) -- see README",
+    "'The research profile directory is machine-wide' for what that does and does not separate."
+  ]
+}

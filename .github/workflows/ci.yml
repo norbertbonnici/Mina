@@ -1,0 +1,181 @@
+# CI skeleton (M0-1): build + unit tests, IaC hygiene, config scanning, SBOM (SR-011/012).
+# Security suites from docs/TEST_STRATEGY.md attach to this pipeline as their milestones land.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
+          # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
+          # so drift fails the locked-mode restore with NU1004.
+          global-json-file: global.json
+      - name: Restore (locked mode — lockfile drift fails the build, threat N7)
+        run: dotnet restore Mina.slnx --locked-mode
+      - run: dotnet build Mina.slnx -c Release --no-restore
+      - run: dotnet test Mina.slnx -c Release --no-build --logger trx --results-directory TestResults
+      - name: Retain test evidence (AC-019)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults
+          retention-days: 30
+
+  # The endpoint agent and tray carry two controls with no Unix equivalent: the tray pipe's DACL
+  # and FirstPipeInstance. The Linux job compiles them; only this one exercises them.
+  endpoint-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
+          # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
+          # so drift fails the locked-mode restore with NU1004.
+          global-json-file: global.json
+      - name: Restore (locked mode)
+        run: dotnet restore tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj --locked-mode
+      - name: Build the tray shell (WPF only builds fully on Windows)
+        run: dotnet build endpoint-agent/src/Mina.EndpointAgent.Tray/Mina.EndpointAgent.Tray.csproj -c Release
+      - name: Endpoint agent and tray tests
+        run: >
+          dotnet test tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj
+          -c Release --logger trx --results-directory TestResults
+      - name: Retain test evidence (AC-019)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-windows
+          path: TestResults
+          retention-days: 30
+
+  # M4-29 item 1: prove the self-contained sidecar publish actually works on every push, the same
+  # way the dotnet job proves the code builds and tests pass. This does NOT publish the artifact
+  # anywhere a booting node can reach it -- upload-artifact is CI evidence (build didn't silently
+  # break, here's the checksum a human can diff), not the production hosting path. Where that
+  # artifact actually gets hosted for sidecar_artifact_url to point at is still an open decision
+  # (see that variable's own comment) — the natural next step is wiring this job's output into
+  # wherever that lands, once it's chosen, not before.
+  sidecar-publish:
+    runs-on: ubuntu-latest
+    needs: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
+          # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
+          # so drift fails the locked-mode restore with NU1004.
+          global-json-file: global.json
+      - name: Publish self-contained sidecar (checksum-verified build)
+        run: ./scripts/publish-sidecar.sh "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-linux-x64
+          path: dist/sidecar/${{ github.sha }}
+          # 7, not 30: each build is ~45 MB and every push produces one, so 30 days of them
+          # exhausted the account's Actions artifact storage quota (2026-09-23).
+          retention-days: 7
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+      - run: terraform fmt -check -recursive infra/terraform
+      - name: Validate modules and environments
+        run: |
+          for dir in infra/terraform/modules/* infra/terraform/environments/*; do
+            if ls "$dir"/*.tf >/dev/null 2>&1; then
+              echo "== $dir"
+              terraform -chdir="$dir" init -backend=false -input=false >/dev/null
+              terraform -chdir="$dir" validate -no-color
+            fi
+          done
+
+  iac-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy config scan (fail on HIGH/CRITICAL)
+        # v0.28.0 (the version this pinned before) is permanently broken: it references
+        # aquasecurity/setup-trivy@v0.2.1 internally, and that tag has since been deleted upstream —
+        # nothing in this repo can fix that, only moving off it. Pinned by commit rather than tag,
+        # matching what trivy-action's own maintainers switched to after hitting the same problem
+        # with their nested dependency (v0.32.0 release notes).
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/terraform
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+  egress-node-firewall:
+    # The M4-10 nftables ruleset had no check anywhere before this: cloud-init writes it and systemd
+    # loads it, so the first thing to parse it was a booting production node. nft applies a file
+    # atomically and the ruleset opens with `flush ruleset`, so one syntax error leaves a node with
+    # no rules at all rather than a partial set — containment silently absent instead of failing
+    # closed. Runs under sudo because `nft --check` still asks the kernel to validate the batch, and
+    # because the rules match skuid by name, which nft resolves through getpwnam while parsing.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nftables
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables
+      - name: Check the egress node ruleset
+        run: sudo ./scripts/validate-nftables-config.sh
+
+  egress-transport:
+    # Validate the Envoy egress config and prove agent↔Envoy interop against a real Envoy.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
+          # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
+          # so drift fails the locked-mode restore with NU1004.
+          global-json-file: global.json
+      - name: Install Envoy (func-e, pinned)
+        run: |
+          curl -fsSL https://func-e.io/install.sh | bash -s -- -b "$HOME/.local/bin"
+          "$HOME/.local/bin/func-e" use 1.39.1
+          echo "MINA_ENVOY=$($HOME/.local/bin/func-e which)" >> "$GITHUB_ENV"
+      - name: Validate Envoy egress config
+        run: ENVOY="$MINA_ENVOY" ./scripts/validate-envoy-config.sh
+      - name: Agent↔Envoy interop + hostname telemetry test
+        run: dotnet test tests/integration/Mina.Transport.Tests -c Release
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
+          # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
+          # so drift fails the locked-mode restore with NU1004.
+          global-json-file: global.json
+      - run: dotnet tool install --global CycloneDX
+      - run: dotnet restore Mina.slnx --locked-mode
+      - name: Generate CycloneDX SBOM
+        run: dotnet CycloneDX Mina.slnx -o sbom --json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom
+          retention-days: 90

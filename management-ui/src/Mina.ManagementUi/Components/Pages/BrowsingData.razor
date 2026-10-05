@@ -1,0 +1,271 @@
+@page "/browsing-data"
+@using Microsoft.AspNetCore.Authorization
+@using Mina.ControlPlane.Application.Sessions
+@using Mina.ControlPlane.Application.Telemetry
+@using Mina.ControlPlane.Domain.Sessions
+@attribute [Authorize(Policy = UiPolicies.TelemetryViewer)]
+@inject BrowsingDataReviewService Reviews
+@inject ISessionQueries SessionQueries
+@inject AuthenticationStateProvider AuthState
+@inject TimeProvider Clock
+
+<h1>Browsing Data</h1>
+<p class="lede">
+    Hostname-level connection records only — <code>mina.hostname.v1</code>, never page content,
+    query strings or search terms (ADR-0002). One page view routinely opens a separate connection
+    to every third-party host it loads from (CDNs, fonts, analytics, ads), so connection counts run
+    well above the number of pages actually visited — grouped by host below for that reason.
+    Suppressed sessions show connection counts, never destinations. Every view of this page is
+    written to the audit trail as <code>telemetry_viewed</code>.
+</p>
+
+<form method="get" class="filters">
+    <div class="field">
+        <label for="f-analyst">Analyst</label>
+        <select id="f-analyst" name="analyst">
+            <option value="">All analysts</option>
+            @if (_analysts is not null)
+            {
+                @foreach (var a in _analysts)
+                {
+                    <option value="@a.UserObjectId" selected="@(a.UserObjectId == Analyst)">@a.UserPrincipalName</option>
+                }
+            }
+        </select>
+    </div>
+    <div class="field">
+        <label for="f-from">From</label>
+        <input type="date" id="f-from" name="from" value="@From.ToString("yyyy-MM-dd")" />
+    </div>
+    <div class="field">
+        <label for="f-to">To</label>
+        <input type="date" id="f-to" name="to" value="@ToInclusive.ToString("yyyy-MM-dd")" />
+    </div>
+    <label class="toggle">
+        <input type="checkbox" name="offHoursOnly" value="true" checked="@OffHoursOnly" />
+        Off-hours only
+    </label>
+    <button type="submit">Apply</button>
+</form>
+<p class="muted" style="margin-top:-1rem">
+    An unscoped query (no analyst selected) must stay within
+    @BrowsingDataReviewService.MaxUnscopedRangeDays days; naming one analyst has no range limit.
+</p>
+
+@if (_error is not null)
+{
+    <div class="banner">@_error</div>
+}
+else if (_result is null)
+{
+    <div class="empty">Loading…</div>
+}
+else
+{
+    <div class="cards">
+        <div class="card">
+            <span class="value">@_result.Sessions.Count</span>
+            <span class="label">Sessions in range</span>
+        </div>
+        <div class="card">
+            <span class="value">@_result.ConnectionsTotal</span>
+            <span class="label">Connections logged</span>
+        </div>
+        <div class="card">
+            <span class="value">@_result.Sessions.Sum(s => s.Hostnames.Select(h => h.Hostname).Distinct().Count())</span>
+            <span class="label">Distinct hosts contacted</span>
+        </div>
+        <div class="card">
+            <span class="value" style="color:var(--warn)">@_result.OffHoursFlaggedCount</span>
+            <span class="label">Flagged — outside office hours</span>
+        </div>
+        <div class="card">
+            <span class="value" style="color:var(--warn)">@_result.SensitiveSessionCount</span>
+            <span class="label">Sensitive (suppressed)</span>
+        </div>
+    </div>
+
+    if (_result.Sessions.Count == 0)
+    {
+        <div class="empty">No sessions in this range.</div>
+    }
+    else
+    {
+        <div class="sessions">
+            @foreach (var session in _result.Sessions)
+            {
+                <details class="session" open>
+                    <summary>
+                        <span class="mono">@session.CreatedAt.ToLocalTime().ToString("dd MMM HH:mm")</span>
+                        <span>@session.UserPrincipalName</span>
+                        <span class="pill">@session.Region</span>
+                        <span class="pill @session.Mode.ToString().ToLowerInvariant()">@session.Mode</span>
+                        @if (session.HasOffHoursActivity)
+                        {
+                            <span class="pill offhours">Off-hours</span>
+                        }
+                    </summary>
+
+                    @if (session.Mode == SessionMode.Sensitive)
+                    {
+                        <div class="suppressed-panel">
+                            Destinations withheld under an approved sensitive-session suppression (ADR-0003).
+                            @session.SuppressedIntervals.Sum(s => s.ConnectionCount) connections,
+                            @FormatBytes(session.SuppressedIntervals.Sum(s => s.BytesTotal)) transferred
+                            across @session.SuppressedIntervals.Count interval(s) recorded.
+                        </div>
+                    }
+                    else if (session.Hostnames.Count == 0)
+                    {
+                        <div class="empty">No connections recorded for this session.</div>
+                    }
+                    else
+                    {
+                        <div class="hostgroups">
+                            @foreach (var g in GroupByHost(session.Hostnames))
+                            {
+                                <details class="hostgroup">
+                                    <summary>
+                                        <code>@g.Hostname</code>
+                                        <span class="mono">@g.Count connection@(g.Count == 1 ? "" : "s")</span>
+                                        <span class="mono">
+                                            @g.FirstSeen.ToLocalTime().ToString("HH:mm:ss")–@g.LastSeen.ToLocalTime().ToString("HH:mm:ss")
+                                        </span>
+                                        <span class="mono">@FormatBytes(g.BytesUp) up / @FormatBytes(g.BytesDown) down</span>
+                                        @if (g.AnyOffHours)
+                                        {
+                                            <span class="pill offhours">Off-hours</span>
+                                        }
+                                    </summary>
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>Time</th>
+                                                <th>Port</th>
+                                                <th>Up</th>
+                                                <th>Down</th>
+                                                <th>Duration</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var h in g.Connections)
+                                            {
+                                                <tr class="@(h.IsOffHours ? "flagged" : null)">
+                                                    <td class="mono">@h.OccurredAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                                                    <td class="mono">@h.Port</td>
+                                                    <td class="mono">@FormatBytes(h.BytesUp)</td>
+                                                    <td class="mono">@FormatBytes(h.BytesDown)</td>
+                                                    <td class="mono">@h.DurationMs ms</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </details>
+                            }
+                        </div>
+                    }
+                </details>
+            }
+        </div>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "analyst")]
+    private string? Analyst { get; set; }
+
+    [SupplyParameterFromQuery(Name = "from")]
+    private string? FromRaw { get; set; }
+
+    [SupplyParameterFromQuery(Name = "to")]
+    private string? ToRaw { get; set; }
+
+    [SupplyParameterFromQuery(Name = "offHoursOnly")]
+    private bool? OffHoursOnlyRaw { get; set; }
+
+    // Date-only inputs, interpreted at UTC midnight rather than the viewer's own time zone: a
+    // simpler, predictable boundary for v1, distinct from off-hours flagging itself, which does
+    // convert through the configured IANA zone (BrowsingDataReviewService/OfficeHoursOptions) --
+    // this is only the coarse day-range filter, not the per-connection judgement.
+    private DateTimeOffset Today => new(Clock.GetUtcNow().Date, TimeSpan.Zero);
+
+    private DateTimeOffset From =>
+        DateOnly.TryParse(FromRaw, out var d) ? new DateTimeOffset(d.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero) : Today.AddDays(-7);
+
+    /// <summary>The end date as typed (inclusive); <see cref="ToExclusive"/> is what the query actually uses.</summary>
+    private DateTimeOffset ToInclusive =>
+        DateOnly.TryParse(ToRaw, out var d) ? new DateTimeOffset(d.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero) : Today;
+
+    private DateTimeOffset ToExclusive => ToInclusive.AddDays(1);
+
+    private bool OffHoursOnly => OffHoursOnlyRaw ?? false;
+
+    private IReadOnlyList<AnalystSummary>? _analysts;
+    private BrowsingDataResult? _result;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() =>
+        _analysts = await SessionQueries.ListDistinctAnalystsAsync(CancellationToken.None);
+
+    // Query-string-bound parameters are re-supplied on every navigation under static SSR, and this
+    // runs after each one — the same lifecycle Approvals.razor's offset pagination relies on. Kept
+    // separate from OnInitializedAsync (which only loads the analyst picker, once) so the picker
+    // does not re-query on every filter change.
+    protected override async Task OnParametersSetAsync()
+    {
+        _error = null;
+        try
+        {
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            _result = await Reviews.ReviewAsync(
+                user.ToSessionPrincipal(),
+                new BrowsingDataQuery(string.IsNullOrWhiteSpace(Analyst) ? null : Analyst, From, ToExclusive, OffHoursOnly),
+                CancellationToken.None);
+        }
+        catch (BrowsingDataQueryException ex)
+        {
+            _error = ex.Message;
+            _result = null;
+        }
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+        _ => $"{bytes / (1024.0 * 1024.0):F1} MB",
+    };
+
+    /// <summary>
+    /// Collapses a session's raw per-connection list to one row per distinct hostname, ordered by
+    /// first contact. Presentation only — no new data collection, and deliberately no claim about
+    /// which host was a page navigation versus a sub-resource fetch: the network-level capture this
+    /// page reads from (ADR-0002 Option 1) cannot tell those apart, so grouping by host is the
+    /// honest reduction available without a different telemetry source (browser-originated
+    /// navigation events, ADR-0002 Option 2, deliberately deferred pending DPO review).
+    /// </summary>
+    private static IReadOnlyList<HostGroup> GroupByHost(IReadOnlyList<HostnameConnectionView> hostnames) =>
+        hostnames
+            .GroupBy(h => h.Hostname)
+            .Select(g => new HostGroup(
+                g.Key,
+                g.Count(),
+                g.Min(h => h.OccurredAt),
+                g.Max(h => h.OccurredAt),
+                g.Sum(h => h.BytesUp),
+                g.Sum(h => h.BytesDown),
+                g.Any(h => h.IsOffHours),
+                [.. g.OrderBy(h => h.OccurredAt)]))
+            .OrderBy(g => g.FirstSeen)
+            .ToList();
+
+    private sealed record HostGroup(
+        string Hostname,
+        int Count,
+        DateTimeOffset FirstSeen,
+        DateTimeOffset LastSeen,
+        long BytesUp,
+        long BytesDown,
+        bool AnyOffHours,
+        IReadOnlyList<HostnameConnectionView> Connections);
+}

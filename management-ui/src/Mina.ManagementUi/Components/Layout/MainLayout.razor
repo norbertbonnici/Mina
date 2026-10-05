@@ -1,0 +1,40 @@
+@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+
+<header class="topbar">
+    <div class="brand">Mina <span>management</span></div>
+    <nav>
+        <NavLink href="" Match="NavLinkMatch.All">Overview</NavLink>
+        <NavLink href="approvals">Approvals</NavLink>
+        <NavLink href="sessions">Sessions</NavLink>
+        <NavLink href="browsing-data">Browsing Data</NavLink>
+        <NavLink href="audit">Audit</NavLink>
+        <NavLink href="region-requests">Region Requests</NavLink>
+    </nav>
+    <div class="identity">
+        <AuthorizeView>
+            <Authorized>
+                <span class="who">@context.User.Identity?.Name</span>
+                <span class="roles">@string.Join(" · ", RoleNames(context.User))</span>
+            </Authorized>
+            <NotAuthorized>
+                <span class="who">not signed in</span>
+            </NotAuthorized>
+        </AuthorizeView>
+    </div>
+</header>
+
+<main>
+    @Body
+</main>
+
+<footer>
+    Governed research egress. URL telemetry is hostname-level only; no TLS interception.
+</footer>
+
+@code {
+    private static IEnumerable<string> RoleNames(System.Security.Claims.ClaimsPrincipal user) =>
+        user.FindAll("roles").Select(c => c.Value)
+            .Concat(user.FindAll(System.Security.Claims.ClaimTypes.Role).Select(c => c.Value))
+            .Distinct();
+}

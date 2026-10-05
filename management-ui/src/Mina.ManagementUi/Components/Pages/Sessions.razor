@@ -1,0 +1,59 @@
+@page "/sessions"
+@using Microsoft.AspNetCore.Authorization
+@using Mina.ControlPlane.Domain.Sessions
+@* Sessions name every analyst, their device and whether they are under an approved suppression, so the screen is for approvers and administrators, not for any signed-in user. *@
+@attribute [Authorize(Policy = UiPolicies.Approver)]
+@inject ISessionQueries SessionQueries
+@inject TimeProvider Clock
+
+<h1>Sessions</h1>
+<p class="lede">
+    Recent research sessions. "Sensitive" means URL telemetry is suppressed under an approval;
+    the identity, device, region and timings below are recorded regardless and cannot be exempted.
+</p>
+
+@if (_sessions is null)
+{
+    <div class="empty">Loading…</div>
+}
+else if (_sessions.Count == 0)
+{
+    <div class="empty">No sessions yet.</div>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Started</th>
+                <th>Analyst</th>
+                <th>Device</th>
+                <th>Region</th>
+                <th>State</th>
+                <th>Logging</th>
+                <th>Lease ends</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var session in _sessions)
+            {
+                <tr>
+                    <td>@session.CreatedAt.ToLocalTime().ToString("dd MMM HH:mm")</td>
+                    <td>@session.UserPrincipalName</td>
+                    <td><code>@(session.DeviceId ?? "—")</code></td>
+                    <td>@session.Region</td>
+                    <td><span class="pill @session.State.ToString().ToLowerInvariant()">@session.State</span></td>
+                    <td><span class="pill @session.Mode.ToString().ToLowerInvariant()">@session.Mode</span></td>
+                    <td>@session.LeaseExpiresAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<ResearchSession>? _sessions;
+
+    protected override async Task OnInitializedAsync() =>
+        _sessions = await SessionQueries.ListRecentAsync(50, CancellationToken.None);
+}

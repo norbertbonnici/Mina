@@ -1,0 +1,88 @@
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Mina.ControlPlane.Api;
+using Mina.ControlPlane.Api.Infrastructure;
+using Mina.ControlPlane.Domain.SensitiveSessions;
+using Mina.ControlPlane.Domain.Sessions;
+using Mina.ControlPlane.Pki;
+
+namespace Mina.TestSupport;
+
+/// <summary>
+/// Hosts the real control-plane API for the end-to-end tests, with two substitutions: Entra token
+/// validation becomes <see cref="BearerTestAuthHandler"/>, and the issuing CA is one the test also
+/// gave to the egress, so a session certificate the API signs is one the egress will accept. Every
+/// other layer — authorization policy, session service, CSR signing, repository — is production
+/// wiring.
+/// </summary>
+public sealed class ControlPlaneHost(
+    CertificateAuthority authority,
+    string egressHost,
+    int egressPort,
+    string egressServerName,
+    TimeSpan leaseTtl,
+    ISessionRepository? sharedSessions = null,
+    ISensitiveSessionRepository? sharedRequests = null) : WebApplicationFactory<ControlPlaneApiEntryPoint>
+{
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        // Point the host at the API's own project directory. Without this the factory guesses a
+        // path next to the solution file, which is wrong for this repository layout — and is only
+        // papered over in test projects by a generated manifest that other hosts (the demo) lack.
+        builder.UseContentRoot(RepoRoot.Path("control-plane", "src", "Mina.ControlPlane.Api"));
+        return base.CreateHost(builder);
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["AzureAd:Instance"] = "https://login.microsoftonline.com/",
+            ["AzureAd:TenantId"] = "11111111-1111-1111-1111-111111111111",
+            ["AzureAd:ClientId"] = "22222222-2222-2222-2222-222222222222",
+            ["Mina:Session:AnalystRole"] = "Mina.Analyst",
+            ["Mina:Session:LeaseTtl"] = leaseTtl.ToString(),
+            ["Mina:Regions:Approved:0"] = "westeurope",
+            ["Mina:Regions:Approved:1"] = "francecentral", // approved but never activated
+            ["Mina:Regions:Active:0"] = "westeurope",
+            ["Mina:Egress:Regions:westeurope:Host"] = egressHost,
+            ["Mina:Egress:Regions:westeurope:Port"] = egressPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["Mina:Egress:Regions:westeurope:ServerName"] = egressServerName,
+        }));
+
+        builder.ConfigureTestServices(services =>
+        {
+            services.AddAuthentication(BearerTestAuthHandler.SchemeName)
+                .AddScheme<AuthenticationSchemeOptions, BearerTestAuthHandler>(
+                    BearerTestAuthHandler.SchemeName, _ => { });
+
+            services.RemoveAll<ICertificateAuthorityProvider>();
+            services.AddSingleton<ICertificateAuthorityProvider>(new FixedCertificateAuthorityProvider(authority));
+
+            // Optional shared stores let another host in the same process — the demo's management
+            // UI — read and write the very same sessions and approvals this API serves.
+            if (sharedSessions is not null)
+            {
+                services.RemoveAll<ISessionRepository>();
+                services.AddSingleton(sharedSessions);
+            }
+
+            if (sharedRequests is not null)
+            {
+                services.RemoveAll<ISensitiveSessionRepository>();
+                services.AddSingleton(sharedRequests);
+            }
+        });
+    }
+
+    private sealed class FixedCertificateAuthorityProvider(CertificateAuthority authority) : ICertificateAuthorityProvider
+    {
+        public CertificateAuthority GetAuthority() => authority;
+    }
+}

@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is here for one type: NotifyIcon, the only in-box way to own a notification-area
+         icon. Taking a third-party tray package instead would add a supply-chain dependency to a
+         signed endpoint component for no capability we do not already have. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Mina.EndpointAgent.Tray</RootNamespace>
+    <AssemblyName>Mina.Tray</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The tunnel (branding/mina.svg) as the executable's own icon resource: what the Start-menu
+         shortcut, taskbar and Alt-Tab show. Embedded at build time, not a file in the payload, so
+         the signed package gains no extra binary. Regenerate with branding/New-MinaIcons.ps1.
+         Forward slashes on purpose: this value goes to the compiler as-is, and CI also compiles
+         this project on Linux. -->
+    <ApplicationIcon>../../../branding/mina.ico</ApplicationIcon>
+    <!-- Runs as the interactive user, never elevated. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms is here for NotifyIcon alone. Its implicit usings would put System.Drawing and
+         System.Windows.Forms in every file, where Application, Brush and Color collide with their
+         WPF namesakes; the one file that needs them imports them itself. -->
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WAM broker sign-in (M2-4). Broker brings in Microsoft.Identity.Client transitively, but is
+         referenced explicitly too: the WithBroker overload this project needs lives in the
+         Broker package's own namespace, not the core one. -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.88.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.88.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mina.EndpointAgent.Ipc\Mina.EndpointAgent.Ipc.csproj" />
+    <ProjectReference Include="..\Mina.EndpointAgent.Tray.Core\Mina.EndpointAgent.Tray.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The single source of truth for what gets launched (M2-4): copied rather than duplicated,
+         so a flag change there reaches the tray without a code change here. Must stay the same
+         file WindowsPeerAuthorizer's configuration is measured against. -->
+    <None Include="..\..\..\edge-integration\research-browser-flags.json"
+          Link="research-browser-flags.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

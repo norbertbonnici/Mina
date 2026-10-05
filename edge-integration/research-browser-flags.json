@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "_comment": [
+    "The launch flags the agent passes the research browser (ADR-0001 variant C2, M2-5).",
+    "Every entry here has been verified behaviourally on Edge Beta 153 by the scripts in",
+    "tests/security/windows-enforcement/ -- see edge-integration/README.md for what each one",
+    "was measured doing. Nothing enters this file on the strength of documentation alone: a",
+    "switch or policy name the browser does not recognise is accepted silently and changes",
+    "nothing, which is indistinguishable from working until someone measures it.",
+    "Candidates awaiting verification live in the README, deliberately not here."
+  ],
+
+  "researchBrowser": {
+    "imagePath": "C:\\Program Files (x86)\\Microsoft\\Edge Beta\\Application\\msedge.exe",
+    "_comment": [
+      "A second Edge installation at its own image path, which is the whole of variant C2.",
+      "Windows per-app network controls key on the image path only, so this path -- not a",
+      "profile, not a command line -- is what the agent's WFP rules bind to. It MUST match the",
+      "path those rules use or enforcement silently covers nothing."
+    ]
+  },
+
+  "launchFlags": [
+    "--user-data-dir={ResearchProfileDir}",
+    "--proxy-server=http://127.0.0.1:{AgentProxyPort}",
+    "--proxy-bypass-list=<-loopback>",
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--no-first-run",
+    "--no-default-browser-check"
+  ],
+
+  "placeholders": {
+    "ResearchProfileDir": "Absolute path to the dedicated research profile directory. Separate from the analyst's ordinary Edge profile. Note this separates state, NOT network identity -- see README.",
+    "AgentProxyPort": "The port the agent's loopback proxy actually bound. Ephemeral by default (Mina:Agent:LoopbackPort = 0), so it is discovered at runtime and passed here; nothing may hard-code it."
+  },
+
+  "machineWidePolicies": {
+    "_comment": [
+      "Empty by design, and that is a decision rather than an omission. Edge reads policy from",
+      "one machine-wide location that every channel and every profile shares, so any policy set",
+      "for the research context also lands on the analyst's ordinary Edge. The controls below",
+      "are pinned and available, but the research browser is already confined to the agent's",
+      "proxy by WFP, so setting them machine-wide degrades ordinary browsing to duplicate a",
+      "control that is already in force. See README 'Why no machine-wide policies'."
+    ]
+  }
+}

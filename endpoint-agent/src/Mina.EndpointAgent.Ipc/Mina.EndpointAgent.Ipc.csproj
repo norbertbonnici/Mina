@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Mina.EndpointAgent.Ipc</RootNamespace>
+    <!-- The contract between the SYSTEM agent and the per-user tray. Deliberately free of any
+         Windows-only API so both ends, and the tests, build and run on CI's Linux hosts. -->
+  </PropertyGroup>
+
+</Project>

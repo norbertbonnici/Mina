@@ -1,0 +1,71 @@
+# Copy to dev-onprem.auto.tfvars (git-ignored) and fill in. Every value here is a fact about your
+# Proxmox cluster and network; none has a default, because a wrong guess would either fail late or
+# succeed against the wrong network.
+
+# --- Proxmox placement --------------------------------------------------------------------
+proxmox_node = "pve01"
+datastore_id = "local-lvm"
+
+# Must have the "snippets" content type enabled (Datacenter > Storage > Edit > Content).
+# It is off by default and is the usual first-run failure.
+snippet_datastore_id = "local"
+
+# --- DMZ network (ADR-0006 constraint 2) ----------------------------------------------------
+dmz_bridge  = "vmbr1"
+dmz_vlan_id = 30
+# Whether the guest NIC should 802.1Q-tag traffic with dmz_vlan_id. Leave true for a trunk port
+# expecting that tag. Set false if the switch port instead carries dmz_vlan_id as its native/
+# untagged VLAN -- tagging on top of that double-tags and the traffic goes nowhere, which looks
+# identical to a dead link from the guest's side (boots fine, no DNS/apt/SSH, nothing arrives).
+# dmz_vlan_tagged = false
+dmz_gateway = "10.20.30.1"
+dns_servers = ["10.10.0.53"]
+
+proxy_address = "10.20.30.10/24"
+app_address   = "10.20.30.11/24"
+sql_address   = "10.20.30.12/24"
+
+# VM ID of a sysprepped, generalized Windows Server template. Both SQL Server and the application
+# host run on Windows now, not Linux (D-17's GA path to Entra/managed-identity auth for SQL Server
+# is Windows + SQL Server 2025 only, and the app host followed once it needed its own Arc identity
+# to authenticate to SQL with no stored credential -- see app-onprem-windows's header). Build the
+# template once (install Windows, sysprep /generalize /oobe /shutdown, then mark it a template),
+# then point this at its VM ID.
+windows_template_vm_id = 9113
+
+# Corporate ranges allowed to reach the management listener and to SSH to these hosts. Everything
+# else in the DMZ, and everything on the internet, is dropped.
+corp_management_cidrs = ["10.10.0.0/16"]
+
+# Public DNS name the Azure egress nodes reach. Point it at proxy_address' public NAT.
+public_hostname = "mina-cp.example.org"
+
+# Address of whatever terminates public TLS in front of the proxy and forwards to it over plain
+# HTTP -- a Cloudflare Tunnel connector, or your own reverse proxy. Only this address may reach
+# the proxy's node-facing port. Use "0.0.0.0/0" if the proxy VM terminates TLS itself instead (and
+# adjust its nginx site + install a certificate there to match).
+tunnel_connector_cidr = "10.20.30.50/32"
+
+ssh_public_keys = ["ssh-ed25519 AAAA... mina-admin"]
+
+# --- Base image ------------------------------------------------------------------------------
+# A dated release, not "current": AC-018 applies to the on-premises plane too since ADR-0006.
+# Get the digest from the SHA256SUMS file in the same release directory.
+cloud_image_url    = "https://cloud-images.ubuntu.com/releases/24.04/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img"
+cloud_image_sha256 = "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30"
+
+# --- Published listener: source policy and monitoring (M4-14) -------------------------------
+# The egress stamps' NAT public prefixes, copied from the Azure environment's egress-stamp outputs
+# (they are static -- D-07 keeps them as reviewed tfvars). Every node-API request is tagged
+# known/unknown against this list in the proxy's access log; that tag is what the "source outside
+# the stamps' NAT prefixes" alert reads. Leave empty to disable the tagging.
+node_source_cidrs = ["68.221.129.82/31"]
+# Refuse unknown sources at the proxy. Leave false until every stamp's prefix is listed above and
+# the access log has shown no unknown-source traffic; enabling it with a prefix missing takes
+# that region's nodes off the air.
+enforce_node_source_cidrs = false
+
+# Where the proxy host's own metrics and logs go (nginx stub_status, node-listener access/error
+# logs). Same value the application uses for Mina:Observability:OtlpEndpoint. Comment out to
+# install no collector -- a visible gap, not a default to ship with.
+otlp_endpoint = "http://signoz-collector.internal:4317"

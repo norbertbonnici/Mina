@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fully-automated Windows 11 Enterprise install for a Mina compliance-testing client (M2-1).
+  Never committed with a real password; see README.md in this directory for how to fill in
+  REPLACE_WITH_LOCAL_ADMIN_PASSWORD before building the seed ISO, and for the whole build recipe
+  this file is one part of (VM hardware, driver/guest-agent gotchas found live, the "Load driver"
+  manual step this file's DriverPaths section tries to avoid on a rebuild).
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <!--
+        Which optical drive letter the virtio-win.iso lands on in WinPE is not fixed by attach
+        order the way it might look; found live, the hard way (2026-09-05): with three CD-ROMs
+        attached (install ISO, virtio-win.iso, this seed ISO), Setup did not surface the vioscsi
+        driver from E:\, and the mina-w11-01 build needed it loaded manually at the "Load driver"
+        prompt before a disk was even visible. Listing D:/E:/F: for every driver folder below is
+        cheap insurance against that, not a guarantee: Setup uses whichever of these actually
+        exists and ignores the rest, so covering three plausible letters costs nothing if it lands
+        on the one already covered, and saves the manual step if it doesn't.
+      -->
+      <DriverPaths>
+        <PathAndCredentials wcm:keyValue="1" wcm:action="add">
+          <Path>D:\vioscsi\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="2" wcm:action="add">
+          <Path>E:\vioscsi\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="3" wcm:action="add">
+          <Path>F:\vioscsi\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="4" wcm:action="add">
+          <Path>D:\NetKVM\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="5" wcm:action="add">
+          <Path>E:\NetKVM\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="6" wcm:action="add">
+          <Path>F:\NetKVM\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="7" wcm:action="add">
+          <Path>D:\viostor\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="8" wcm:action="add">
+          <Path>E:\viostor\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:keyValue="9" wcm:action="add">
+          <Path>F:\viostor\w11\amd64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>260</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+              <Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <!-- Index 3 = Windows 11 Enterprise on the Business Editions multi-edition ISO,
+               confirmed via `wimlib-imagex info install.wim`, not assumed; indexes vary by
+               ISO/build and the README records how to re-check this on a different release. -->
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>3</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>MINA-W11-01</ComputerName>
+      <TimeZone>W. Europe Standard Time</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <!-- Belt-and-braces only: a real vTPM 2.0 device + OVMF Secure Boot (see README's qm
+           commands) should already satisfy Windows 11's install-time hardware check without
+           needing this. Left in so a rebuild still proceeds if either is misconfigured, rather
+           than failing setup outright on a lab VM this isn't meant to gate. -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Bypass Windows 11 hardware checks if the virtual TPM/Secure Boot isn't recognised in time</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
+      <!--
+        Local account + autologon is deliberately temporary scaffolding, not the end state: once
+        Intune/Entra licensing lands (M2-1's own remaining blocker), this machine gets Entra-joined
+        and enrolled, which is what actually makes it useful for compliance-policy testing. The
+        local account exists only so FirstLogonCommands below has something to run as.
+      -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>minaadmin</Name>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>REPLACE_WITH_LOCAL_ADMIN_PASSWORD</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>10</LogonCount>
+        <Username>minaadmin</Username>
+        <Password>
+          <Value>REPLACE_WITH_LOCAL_ADMIN_PASSWORD</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Install the QEMU guest agent, so this VM is manageable via qm guest exec like every other host in this project. Searches D:/E:/F: rather than assuming a letter -- the mina-w11-01 build found the hardcoded E:\ guess wrong here too, the same issue as the DriverPaths above, and needed this installed by hand at the console as a result.</Description>
+          <CommandLine>powershell -NoProfile -Command "$m = Get-ChildItem -Path D:\,E:\,F:\ -Filter qemu-ga-x86_64.msi -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName; if ($m) { Start-Process msiexec.exe -ArgumentList ('/i \"{0}\" /quiet /norestart' -f $m) -Wait }"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Disable Server Manager / first-logon animation noise</Description>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\ServerManager" /v DoNotOpenServerManagerAtLogon /t REG_DWORD /d 1 /f</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+
+</unattend>

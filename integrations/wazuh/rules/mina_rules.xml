@@ -1,0 +1,182 @@
+<!--
+  Mina custom rules (M3-5, EVENT_SCHEMAS.md §3/§6).
+
+  UNVALIDATED against a live Wazuh instance -- there is none reachable to test against yet, the
+  same honesty note integrations/signoz/README.md already carries for its dashboards. Written
+  against documented Wazuh 4.x rule syntax and this project's own delivered envelope shape
+  (WazuhEventFormat.cs), not assumed correct until confirmed against a real delivered line.
+
+  Confidence varies by rule and is called out per group below: the severity-floor rules
+  (100501-100505) are plain field matches against a flat JSON line and are the least likely to need
+  correction; the correlation rules (100530+) depend on how this Wazuh version flattens nested JSON
+  (user.oid, device.entra_device_id) for <same_field> grouping, which cannot be confirmed without a
+  real delivered event to inspect.
+
+  No rule here ever needs to redact a hostname: WazuhEventFormat only ever forwards AuditEvent.Data,
+  which is proven hostname-free at the source (SensitiveSessionHygieneTests, TelemetryIngestServiceTests) --
+  Wazuh receiving no URL/hostname content is a property of what is sent, not of anything a rule here filters.
+
+  Local file, log_format "json" -- see ../README.md for the exact <localfile> block. With that
+  format Wazuh parses every top-level field of the JSON line itself; no custom decoder is needed to
+  reach $(event_type)/$(severity)/etc. below.
+-->
+<group name="mina,mina_audit,">
+
+  <!-- Base: every Mina event lands here first (level matches "info", the quietest documented
+       severity), so every rule below can chain off <if_sid>100500</if_sid> rather than re-matching
+       the schema string. -->
+  <rule id="100500" level="3">
+    <field name="schema">^mina\.audit\.v1$</field>
+    <description>Mina audit event: $(event_type)</description>
+    <options>no_full_log</options>
+    <group>mina_audit_event,</group>
+  </rule>
+
+  <!-- Severity floor -- EVENT_SCHEMAS §3's own suggested mapping (high->10+, critical->13+). -->
+  <rule id="100501" level="3">
+    <if_sid>100500</if_sid>
+    <field name="severity">^info$</field>
+    <description>Mina: $(event_type) (info)</description>
+  </rule>
+
+  <rule id="100502" level="5">
+    <if_sid>100500</if_sid>
+    <field name="severity">^notice$</field>
+    <description>Mina: $(event_type) (notice)</description>
+  </rule>
+
+  <rule id="100503" level="7">
+    <if_sid>100500</if_sid>
+    <field name="severity">^warning$</field>
+    <description>Mina: $(event_type) (warning)</description>
+  </rule>
+
+  <rule id="100504" level="10">
+    <if_sid>100500</if_sid>
+    <field name="severity">^high$</field>
+    <description>Mina: $(event_type) (high)</description>
+  </rule>
+
+  <rule id="100505" level="13">
+    <if_sid>100500</if_sid>
+    <field name="severity">^critical$</field>
+    <description>Mina: $(event_type) (critical)</description>
+  </rule>
+
+  <!-- N5: a node still reporting destinations for a suppressed session. EVENT_SCHEMAS §6 says
+       "page immediately" -- no frequency threshold, one occurrence is already the finding. -->
+  <rule id="100510" level="13">
+    <if_sid>100505</if_sid>
+    <field name="event_type">^sensitive_suppression_mismatch$</field>
+    <description>Mina: a suppressed session still received destinations from a node (threat N5)</description>
+  </rule>
+
+  <!-- Break-glass: every use, critical, no threshold (AC-015). Matches both break_glass_signin and
+       break_glass_azure_action without needing to enumerate them. -->
+  <rule id="100511" level="13">
+    <if_sid>100505</if_sid>
+    <field name="event_type">^break_glass_</field>
+    <description>Mina: break-glass access used ($(event_type))</description>
+  </rule>
+
+  <!-- authz_denied with reason AuthenticationContextRequired is a routine Conditional Access
+       step-up, not a refusal (EVENT_SCHEMAS §6's own caveat) -- kept quiet at the severity floor
+       above and explicitly excluded from the correlation rule below via negate, rather than
+       silently correlating on it and training operators to ignore the resulting noise. -->
+  <rule id="100520" level="3">
+    <if_sid>100500</if_sid>
+    <field name="event_type">^authz_denied$</field>
+    <field name="data">AuthenticationContextRequired</field>
+    <description>Mina: routine Conditional Access step-up challenge, not a refusal</description>
+  </rule>
+
+  <!-- Repeated genuine authz_denied for the same principal. UNVALIDATED: <same_field> against a
+       dotted JSON path (user.oid) is the part of this file least likely to work unmodified --
+       confirm the field actually appears under that name in a real delivered line (it may need
+       flattening, e.g. a pre-decoder, depending on Wazuh version) before relying on this rule. -->
+  <rule id="100521" level="10" frequency="5" timeframe="600">
+    <if_sid>100500</if_sid>
+    <field name="event_type">^authz_denied$</field>
+    <field name="data" negate="yes">AuthenticationContextRequired</field>
+    <same_field>user.oid</same_field>
+    <description>Mina: repeated authorisation denials for the same user ($(user.upn))</description>
+  </rule>
+
+  <!-- client_tamper_suspected clustering (EVENT_SCHEMAS §6). Same UNVALIDATED caveat as 100521 for
+       the <same_field> grouping. -->
+  <rule id="100530" level="12" frequency="3" timeframe="900">
+    <if_sid>100500</if_sid>
+    <field name="event_type">^client_tamper_suspected$</field>
+    <same_field>device.entra_device_id</same_field>
+    <description>Mina: repeated tamper indicators from the same device</description>
+  </rule>
+
+  <!-- ca_rotation_status at Critical (M4-2, EVENT_SCHEMAS §3/§6): "page immediately", the same
+       urgency class as break-glass and sensitive_suppression_mismatch above, not a routine warning
+       -- already at the 100505 severity floor, but named specifically here (like 100510/100511)
+       so an operator sees "internal CA needs rolling over now" rather than a generic critical-
+       severity line. No frequency threshold: one occurrence already means the platform's whole
+       session-issuance capability is within mina-ca rotation-check's own --critical-days window. -->
+  <rule id="100531" level="13">
+    <if_sid>100505</if_sid>
+    <field name="event_type">^ca_rotation_status$</field>
+    <description>Mina: internal CA certificate needs rolling over now (M4-2) — see OPERATIONS.md's "Internal CA rollover"</description>
+  </rule>
+
+</group>
+
+<!--
+  Published node-facing endpoint (M4-14): the DMZ proxy's nginx access log, one JSON line per
+  request (schema mina.proxy.v1, log_format in modules/control-plane-onprem's proxy cloud-init).
+  Same UNVALIDATED caveat as the group above, and the same log_format "json" <localfile> shape --
+  see ../README.md. The line carries the recovered node address, the route, the status, whether the
+  rate limiter acted (limit_req: PASSED/DELAYED/REJECTED) and whether the source is one of the
+  egress stamps' NAT prefixes (mina_source_known: 1/0/unconfigured). It never carries a request
+  body or a research hostname, by construction.
+-->
+<group name="mina,mina_proxy,">
+
+  <rule id="100600" level="1">
+    <field name="schema">^mina\.proxy\.v1$</field>
+    <description>Mina proxy: node-listener request</description>
+    <options>no_log</options>
+  </rule>
+
+  <!-- A source outside every stamp's NAT prefix reached the node API. Either a stamp's prefix is
+       missing from node_source_cidrs (fix the tfvars) or something that is not a node is probing
+       the published listener. The application refuses it without a node token either way; the
+       point of this alert is that the attempt is seen. "unconfigured" does not match: the rule
+       only fires once the prefixes are actually listed. -->
+  <rule id="100610" level="10">
+    <if_sid>100600</if_sid>
+    <field name="mina_source_known">^0$</field>
+    <description>Mina proxy: node-API request from outside the egress stamps' NAT prefixes ($(remote_addr))</description>
+  </rule>
+
+  <!-- The limiter refused a request. One is a node in a retry loop or a stamp re-imaging; the
+       sized limits are meant to absorb both without a 429, so even a single hit is worth a look. -->
+  <rule id="100620" level="5">
+    <if_sid>100600</if_sid>
+    <field name="limit_req">^REJECTED$</field>
+    <description>Mina proxy: node-listener request rate-limited ($(remote_addr) $(path))</description>
+  </rule>
+
+  <!-- Sustained rejections from one source: a misbehaving node, or an attempt to exhaust the
+       published listener. -->
+  <rule id="100621" level="10" frequency="20" timeframe="300">
+    <if_sid>100620</if_sid>
+    <same_field>remote_addr</same_field>
+    <description>Mina proxy: sustained rate-limiting of $(remote_addr) on the node listener</description>
+  </rule>
+
+  <!-- The application behind the proxy is failing or unreachable: nodes stop refreshing their
+       session view and, past AdmissionMaxViewAge, stop admitting tunnels (OPERATIONS.md,
+       "Published DMZ control-plane endpoint unreachable"). -->
+  <rule id="100630" level="7" frequency="10" timeframe="120">
+    <if_sid>100600</if_sid>
+    <field name="status">^50[234]$</field>
+    <description>Mina proxy: node listener answering 5xx -- control plane unreachable from the DMZ proxy</description>
+  </rule>
+
+</group>
+
