@@ -26,7 +26,7 @@ jobs:
       - run: dotnet build Mina.slnx -c Release --no-restore
       - run: dotnet test Mina.slnx -c Release --no-build --logger trx --results-directory TestResults
       - name: Retain test evidence (AC-019)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results
@@ -54,7 +54,7 @@ jobs:
           dotnet test tests/unit/Mina.EndpointAgent.Tests/Mina.EndpointAgent.Tests.csproj
           -c Release --logger trx --results-directory TestResults
       - name: Retain test evidence (AC-019)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results-windows
@@ -81,7 +81,7 @@ jobs:
           global-json-file: global.json
       - name: Publish self-contained sidecar (checksum-verified build)
         run: ./scripts/publish-sidecar.sh "${{ github.sha }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sidecar-linux-x64
           path: dist/sidecar/${{ github.sha }}
@@ -174,7 +174,7 @@ jobs:
       - run: dotnet restore Mina.slnx --locked-mode
       - name: Generate CycloneDX SBOM
         run: dotnet CycloneDX Mina.slnx -o sbom --json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom
