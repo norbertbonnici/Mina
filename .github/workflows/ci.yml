@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
           # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
@@ -39,7 +39,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
           # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
@@ -73,7 +73,7 @@ jobs:
     needs: dotnet
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
           # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
           # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           # Install exactly the SDK global.json pins. A floating 10.0.x drifts ahead of the
           # workstation SDK, and the Web SDK bakes its ASP.NET Core patch into packages.lock.json,
