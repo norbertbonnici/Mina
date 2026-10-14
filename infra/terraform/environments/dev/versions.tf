@@ -4,7 +4,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = "~> 5.9"
     }
     # M4-29 item 3: the Mina.Node / Mina.Node.<region> app-role definitions and assignments.
     # First use of this provider anywhere in the repo -- see entra-node-roles.tf's header.
